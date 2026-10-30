@@ -57,7 +57,13 @@ class GaussianModel:
         self._scaling = torch.empty(0)
         self._rotation = torch.empty(0)
         self._opacity = torch.empty(0)
+
+        self._gaussian_scene_num = torch.empty(0)
+        self._gaussian_uid = torch.empty(0, dtype=torch.int64)
+        self._next_gaussian_uid = 0
+
         self.max_radii2D = torch.empty(0)
+        self.tmp_radii = None
         self.xyz_gradient_accum = torch.empty(0)
         self.denom = torch.empty(0)
         self.optimizer = None
@@ -74,11 +80,19 @@ class GaussianModel:
             self._scaling,
             self._rotation,
             self._opacity,
+            self._gaussian_scene_num,
             self.max_radii2D,
             self.xyz_gradient_accum,
             self.denom,
             self.optimizer.state_dict(),
             self.spatial_lr_scale,
+            self.error_line_origin_history,
+            self.error_line_dir_history,
+            self.error_camera_history,
+            self.error_history_ptr,
+            self.error_history_count,
+            self._gaussian_uid,
+            self._next_gaussian_uid,
         )
     
     def restore(self, model_args, training_args):
@@ -89,6 +103,7 @@ class GaussianModel:
         self._scaling, 
         self._rotation, 
         self._opacity,
+        self._gaussian_scene_num,
         self.max_radii2D, 
         xyz_gradient_accum, 
         denom,
@@ -97,6 +112,26 @@ class GaussianModel:
         self.training_setup(training_args)
         self.xyz_gradient_accum = xyz_gradient_accum
         self.denom = denom
+
+        if len(model_args) >= 18:
+            (
+                self.error_line_origin_history,
+                self.error_line_dir_history,
+                self.error_camera_history,
+                self.error_history_ptr,
+                self.error_history_count,
+            ) = model_args[13:18]
+            if self.error_line_origin_history.shape[1] != 1:
+                self.init_error_history()
+        else:
+            self.init_error_history()
+
+        if len(model_args) >= 20:
+            self._gaussian_uid = model_args[18]
+            self._next_gaussian_uid = int(model_args[19])
+        else:
+            self.init_gaussian_uids()
+
         self.optimizer.load_state_dict(opt_dict)
 
     @property
@@ -128,6 +163,10 @@ class GaussianModel:
     @property
     def get_opacity(self):
         return self.opacity_activation(self._opacity)
+    
+    @property
+    def get_gaussian_scene_num(self):
+        return self._gaussian_scene_num
     
     @property
     def get_exposure(self):
@@ -163,17 +202,23 @@ class GaussianModel:
 
         opacities = self.inverse_opacity_activation(0.1 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
 
+
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))
         self._features_rest = nn.Parameter(features[:,:,1:].transpose(1, 2).contiguous().requires_grad_(True))
         self._scaling = nn.Parameter(scales.requires_grad_(True))
         self._rotation = nn.Parameter(rots.requires_grad_(True))
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
+        self._gaussian_scene_num = torch.zeros((fused_point_cloud.shape[0], 1), device="cuda")
+        self.init_gaussian_uids()
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
         self.exposure_mapping = {cam_info.image_name: idx for idx, cam_info in enumerate(cam_infos)}
         self.pretrained_exposures = None
         exposure = torch.eye(3, 4, device="cuda")[None].repeat(len(cam_infos), 1, 1)
         self._exposure = nn.Parameter(exposure.requires_grad_(True))
+
+        self.init_error_history()
+
 
     def training_setup(self, training_args):
         self.percent_dense = training_args.percent_dense
@@ -210,6 +255,47 @@ class GaussianModel:
                                                         lr_delay_mult=training_args.exposure_lr_delay_mult,
                                                         max_steps=training_args.iterations)
 
+    def init_gaussian_uids(self):
+        """Assign stable IDs that remain attached to Gaussians through pruning."""
+        n = self._xyz.shape[0]
+        self._gaussian_uid = torch.arange(
+            n, dtype=torch.int64, device=self._xyz.device
+        )
+        self._next_gaussian_uid = int(n)
+
+    def append_gaussian_uids(self, count):
+        if count <= 0:
+            return
+        new_ids = torch.arange(
+            self._next_gaussian_uid,
+            self._next_gaussian_uid + count,
+            dtype=torch.int64,
+            device=self._xyz.device,
+        )
+        self._gaussian_uid = torch.cat((self._gaussian_uid, new_ids))
+        self._next_gaussian_uid += count
+
+    def init_error_history(self):
+        n = self._xyz.shape[0]
+        device = self._xyz.device
+
+        # The most recent world-space camera-space z-parallel line.
+        self.error_line_origin_history = torch.zeros(
+            (n, 1, 3), dtype=self._xyz.dtype, device=device
+        )
+        self.error_line_dir_history = torch.zeros(
+            (n, 1, 3), dtype=self._xyz.dtype, device=device
+        )
+        self.error_camera_history = torch.full(
+            (n, 1), -1, dtype=torch.int32, device=device
+        )
+        self.error_history_ptr = torch.zeros(
+            n, dtype=torch.int64, device=device
+        )
+        self.error_history_count = torch.zeros(
+            n, dtype=torch.int32, device=device
+        )
+
     def update_learning_rate(self, iteration):
         ''' Learning rate scheduling per step '''
         if self.pretrained_exposures is None:
@@ -234,6 +320,7 @@ class GaussianModel:
             l.append('scale_{}'.format(i))
         for i in range(self._rotation.shape[1]):
             l.append('rot_{}'.format(i))
+        l.append("gaussian_scene_num")
         return l
 
     def save_ply(self, path):
@@ -246,11 +333,11 @@ class GaussianModel:
         opacities = self._opacity.detach().cpu().numpy()
         scale = self._scaling.detach().cpu().numpy()
         rotation = self._rotation.detach().cpu().numpy()
-
+        gaussian_scene_num = (self._gaussian_scene_num.detach().cpu().numpy())
         dtype_full = [(attribute, 'f4') for attribute in self.construct_list_of_attributes()]
 
         elements = np.empty(xyz.shape[0], dtype=dtype_full)
-        attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation), axis=1)
+        attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation, gaussian_scene_num), axis=1)
         elements[:] = list(map(tuple, attributes))
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(path)
@@ -310,8 +397,12 @@ class GaussianModel:
         self._opacity = nn.Parameter(torch.tensor(opacities, dtype=torch.float, device="cuda").requires_grad_(True))
         self._scaling = nn.Parameter(torch.tensor(scales, dtype=torch.float, device="cuda").requires_grad_(True))
         self._rotation = nn.Parameter(torch.tensor(rots, dtype=torch.float, device="cuda").requires_grad_(True))
-
+        self._gaussian_scene_num = torch.tensor(np.asarray(plydata.elements[0]["gaussian_scene_num"]), dtype=torch.float,device="cuda").reshape(-1, 1)
         self.active_sh_degree = self.max_sh_degree
+
+        self.init_gaussian_uids()
+        self.init_error_history()
+
 
     def replace_tensor_to_optimizer(self, tensor, name):
         optimizable_tensors = {}
@@ -357,6 +448,14 @@ class GaussianModel:
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
 
+        self._gaussian_scene_num =  self._gaussian_scene_num[valid_points_mask]
+        self._gaussian_uid = self._gaussian_uid[valid_points_mask]
+        self.error_line_origin_history = self.error_line_origin_history[valid_points_mask]
+        self.error_line_dir_history = self.error_line_dir_history[valid_points_mask]
+        self.error_camera_history = self.error_camera_history[valid_points_mask]
+        self.error_history_ptr = self.error_history_ptr[valid_points_mask]
+        self.error_history_count = self.error_history_count[valid_points_mask]
+
         self.xyz_gradient_accum = self.xyz_gradient_accum[valid_points_mask]
 
         self.denom = self.denom[valid_points_mask]
@@ -385,7 +484,7 @@ class GaussianModel:
 
         return optimizable_tensors
 
-    def densification_postfix(self, new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_tmp_radii):
+    def densification_postfix(self, new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_tmp_radii,new_gaussian_scene_num):
         d = {"xyz": new_xyz,
         "f_dc": new_features_dc,
         "f_rest": new_features_rest,
@@ -401,53 +500,273 @@ class GaussianModel:
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
 
+        self._gaussian_scene_num = torch.cat((self._gaussian_scene_num,new_gaussian_scene_num))
+        num_new = new_xyz.shape[0]
+        device = self._xyz.device
+        self.append_gaussian_uids(num_new)
+        self.error_line_origin_history = torch.cat((
+            self.error_line_origin_history,
+            torch.zeros(num_new, 1, 3, dtype=self._xyz.dtype, device=device),
+        ))
+        self.error_line_dir_history = torch.cat((
+            self.error_line_dir_history,
+            torch.zeros(num_new, 1, 3, dtype=self._xyz.dtype, device=device),
+        ))
+        self.error_camera_history = torch.cat((
+            self.error_camera_history,
+            torch.full((num_new, 1), -1, dtype=torch.int32, device=device),
+        ))
+        self.error_history_ptr = torch.cat((
+            self.error_history_ptr,
+            torch.zeros(num_new, dtype=torch.int64, device=device),
+        ))
+        self.error_history_count = torch.cat((
+            self.error_history_count,
+            torch.zeros(num_new, dtype=torch.int32, device=device),
+        ))
         self.tmp_radii = torch.cat((self.tmp_radii, new_tmp_radii))
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
     def densify_and_split(self, grads, grad_threshold, scene_extent, N=2):
-        n_init_points = self.get_xyz.shape[0]
-        # Extract points that satisfy the gradient condition
-        padded_grad = torch.zeros((n_init_points), device="cuda")
-        padded_grad[:grads.shape[0]] = grads.squeeze()
-        selected_pts_mask = torch.where(padded_grad >= grad_threshold, True, False)
-        selected_pts_mask = torch.logical_and(selected_pts_mask,
-                                              torch.max(self.get_scaling, dim=1).values > self.percent_dense*scene_extent)
+        n_points = self.get_xyz.shape[0]
 
-        stds = self.get_scaling[selected_pts_mask].repeat(N,1)
-        means =torch.zeros((stds.size(0), 3),device="cuda")
+        # grads only contains gradients of Gaussians that existed before cloning,
+        # so set the gradient of newly cloned Gaussians to 0.
+        padded_grad = torch.zeros(n_points, device=self.get_xyz.device)
+        grad_values = grads.reshape(-1)
+        padded_grad[:grad_values.shape[0]] = grad_values
+
+        max_scale = self.get_scaling.max(dim=1).values
+        flagged = self._gaussian_scene_num[:, 0] > 0.5
+
+        normal_split_limit = self.percent_dense * scene_extent
+        flagged_split_limit = normal_split_limit  # *0.5 Flagged-specific scale threshold
+
+        split_limit = torch.where(
+            flagged,
+            torch.full_like(max_scale, flagged_split_limit),
+            torch.full_like(max_scale, normal_split_limit),
+        )
+
+        selected_pts_mask = (
+            (padded_grad >= grad_threshold)
+            & (max_scale > split_limit)
+        )
+
+        stds = self.get_scaling[selected_pts_mask].repeat(N, 1)
+        means = torch.zeros_like(stds)
         samples = torch.normal(mean=means, std=stds)
-        rots = build_rotation(self._rotation[selected_pts_mask]).repeat(N,1,1)
-        new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[selected_pts_mask].repeat(N, 1)
-        new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat(N,1) / (0.8*N))
-        new_rotation = self._rotation[selected_pts_mask].repeat(N,1)
-        new_features_dc = self._features_dc[selected_pts_mask].repeat(N,1,1)
-        new_features_rest = self._features_rest[selected_pts_mask].repeat(N,1,1)
-        new_opacity = self._opacity[selected_pts_mask].repeat(N,1)
+
+        rots = build_rotation(
+            self._rotation[selected_pts_mask]
+        ).repeat(N, 1, 1)
+
+        new_xyz = (
+            torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1)
+            + self.get_xyz[selected_pts_mask].repeat(N, 1)
+        )
+
+        new_scaling = self.scaling_inverse_activation(
+            self.get_scaling[selected_pts_mask].repeat(N, 1) / (0.8 * N)
+        )
+        new_rotation = self._rotation[selected_pts_mask].repeat(N, 1)
+        new_features_dc = self._features_dc[selected_pts_mask].repeat(N, 1, 1)
+        new_features_rest = self._features_rest[selected_pts_mask].repeat(N, 1, 1)
+        new_opacity = self._opacity[selected_pts_mask].repeat(N, 1)
         new_tmp_radii = self.tmp_radii[selected_pts_mask].repeat(N)
 
-        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation, new_tmp_radii)
+        # Current behavior: child Gaussians inherit the parent's flag
+        new_gaussian_scene_num = self._gaussian_scene_num[selected_pts_mask].repeat(N, 1)
 
-        prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
+        self.densification_postfix(
+            new_xyz,
+            new_features_dc,
+            new_features_rest,
+            new_opacity,
+            new_scaling,
+            new_rotation,
+            new_tmp_radii,
+            new_gaussian_scene_num,
+        )
+
+        # Remove split parent Gaussians while keeping new child Gaussians
+        prune_filter = torch.cat((
+            selected_pts_mask,
+            torch.zeros(
+                N * selected_pts_mask.sum(),
+                device=self.get_xyz.device,
+                dtype=torch.bool,
+    ),
+        ))
         self.prune_points(prune_filter)
 
+
     def densify_and_clone(self, grads, grad_threshold, scene_extent):
-        # Extract points that satisfy the gradient condition
-        selected_pts_mask = torch.where(torch.norm(grads, dim=-1) >= grad_threshold, True, False)
-        selected_pts_mask = torch.logical_and(selected_pts_mask,
-                                              torch.max(self.get_scaling, dim=1).values <= self.percent_dense*scene_extent)
-        
+        max_scale = self.get_scaling.max(dim=1).values
+        flagged = self._gaussian_scene_num[:, 0] > 0.5
+
+        normal_clone_limit = self.percent_dense * scene_extent
+        flagged_clone_limit = normal_clone_limit  # 0.5 *  Same flagged threshold as split
+
+        clone_limit = torch.where(
+            flagged,
+            torch.full_like(max_scale, flagged_clone_limit),
+            torch.full_like(max_scale, normal_clone_limit),
+        )
+
+        selected_pts_mask = (
+            (torch.norm(grads, dim=-1) >= grad_threshold)
+            & (max_scale <= clone_limit)
+        )
+
+        # Clone copies to the exact same location as the original
         new_xyz = self._xyz[selected_pts_mask]
         new_features_dc = self._features_dc[selected_pts_mask]
         new_features_rest = self._features_rest[selected_pts_mask]
         new_opacities = self._opacity[selected_pts_mask]
         new_scaling = self._scaling[selected_pts_mask]
         new_rotation = self._rotation[selected_pts_mask]
-
         new_tmp_radii = self.tmp_radii[selected_pts_mask]
 
-        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_tmp_radii)
+        # Current behavior: clone copies inherit the parent's flag
+        new_gaussian_scene_num = self._gaussian_scene_num[selected_pts_mask]
+
+        self.densification_postfix(
+            new_xyz,
+            new_features_dc,
+            new_features_rest,
+            new_opacities,
+            new_scaling,
+            new_rotation,
+            new_tmp_radii,
+            new_gaussian_scene_num,
+        )
+
+    @torch.no_grad()
+    def random_split_explore(
+        self,
+        viewspace_abs_tensor,
+        max_grad,
+        extent,
+        candidate_mask=None,
+        N=2,
+    ):
+        point_count = self._xyz.shape[0]
+
+        if point_count == 0:
+            return 0
+        if N < 2:
+            raise ValueError("N must be at least 2 for splitting")
+
+        abs_grad = viewspace_abs_tensor.grad
+        if abs_grad is None:
+            return 0
+
+        grad_norm = torch.norm(abs_grad[:, :2], dim=-1)
+        grad_norm = torch.nan_to_num(
+            grad_norm, nan=0.0, posinf=0.0, neginf=0.0
+        )
+
+        selected_pts_mask = grad_norm >= max_grad
+
+        if candidate_mask is not None:
+            candidate_mask = torch.as_tensor(
+                candidate_mask, device=self._xyz.device
+            ).reshape(-1).bool()
+
+            if candidate_mask.numel() != point_count:
+                raise ValueError(
+                    f"candidate_mask has {candidate_mask.numel()} entries, "
+                    f"but the model has {point_count} Gaussians"
+                )
+
+            selected_pts_mask &= candidate_mask
+
+        large_enough = (
+            self.get_scaling.max(dim=1).values > self.percent_dense * extent
+        )
+        selected_pts_mask &= large_enough
+
+        split_count = int(selected_pts_mask.sum().item())
+        if split_count == 0:
+            return 0
+
+        print(f"Split:{split_count}")
+        # Keep existing densification statistics. densification_postfix resets
+        # them globally, which would otherwise break interval-based ADC when
+        # random splitting runs every iteration.
+        old_gradient_accum = self.xyz_gradient_accum.clone()
+        old_denom = self.denom.clone()
+        old_max_radii2D = self.max_radii2D.clone()
+
+        if self.tmp_radii is None:
+            self.tmp_radii = torch.zeros(
+                point_count, dtype=self._xyz.dtype, device=self._xyz.device
+            )
+        parent_tmp_radii = self.tmp_radii[selected_pts_mask].clone()
+
+        selected_scaling = self.get_scaling[selected_pts_mask]
+        stds = selected_scaling.repeat(N, 1)
+        samples = torch.normal(mean=torch.zeros_like(stds), std=stds)
+        rotations = build_rotation(
+            self._rotation[selected_pts_mask]
+        ).repeat(N, 1, 1)
+        parent_xyz = self._xyz[selected_pts_mask].repeat(N, 1)
+        new_xyz = (
+            torch.bmm(rotations, samples.unsqueeze(-1)).squeeze(-1) + parent_xyz
+        )
+
+        new_scaling = self.scaling_inverse_activation(
+            selected_scaling.repeat(N, 1) / (0.8 * N)
+        )
+        new_rotation = self._rotation[selected_pts_mask].repeat(N, 1)
+        new_features_dc = self._features_dc[selected_pts_mask].repeat(N, 1, 1)
+        new_features_rest = self._features_rest[selected_pts_mask].repeat(N, 1, 1)
+        new_opacities = self._opacity[selected_pts_mask].repeat(N, 1)
+        new_tmp_radii = parent_tmp_radii.repeat(N)
+        new_gaussian_scene_num = self._gaussian_scene_num[
+            selected_pts_mask
+        ].repeat(N, 1)
+
+        self.densification_postfix(
+            new_xyz,
+            new_features_dc,
+            new_features_rest,
+            new_opacities,
+            new_scaling,
+            new_rotation,
+            new_tmp_radii,
+            new_gaussian_scene_num,
+        )
+
+        # Restore statistics for old points and inherit the parent's statistics
+        # for children before removing the selected parents.
+        self.xyz_gradient_accum = torch.cat(
+            (old_gradient_accum, old_gradient_accum[selected_pts_mask].repeat(N, 1)),
+            dim=0,
+        )
+        self.denom = torch.cat(
+            (old_denom, old_denom[selected_pts_mask].repeat(N, 1)), dim=0
+        )
+        self.max_radii2D = torch.cat(
+            (old_max_radii2D, old_max_radii2D[selected_pts_mask].repeat(N)),
+            dim=0,
+        )
+
+        prune_filter = torch.cat(
+            (
+                selected_pts_mask,
+                torch.zeros(
+                    N * split_count, dtype=torch.bool, device=self._xyz.device
+                ),
+            )
+        )
+        self.prune_points(prune_filter)
+        self.tmp_radii = None
+
+        return split_count
 
     def densify_and_prune(self, max_grad, min_opacity, extent, max_screen_size, radii):
         grads = self.xyz_gradient_accum / self.denom

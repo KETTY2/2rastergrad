@@ -11,21 +11,27 @@
 
 import torch
 import math
-from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 
-def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, separate_sh = False, override_color = None, use_trained_exp=False):
+def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, separate_sh = False, override_color = None, use_trained_exp=False , num_count=False):
     """
     Render the scene. 
     
     Background tensor (bg_color) must be on GPU!
     """
- 
+    from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
+
     # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
     screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0
     try:
         screenspace_points.retain_grad()
+    except:
+        pass
+
+    screenspace_abs = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0
+    try:
+        screenspace_abs.retain_grad()
     except:
         pass
 
@@ -54,6 +60,13 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     means3D = pc.get_xyz
     means2D = screenspace_points
     opacity = pc.get_opacity
+    
+    gaussian_scene= torch.zeros_like(pc.get_opacity)
+    high_error_pixels = torch.zeros(
+    (viewpoint_camera.image_height, viewpoint_camera.image_width),
+    dtype=torch.bool,
+    device="cuda",
+    )
 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
     # scaling / rotation by the rasterizer.
@@ -89,6 +102,9 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
     if separate_sh:
         rendered_image, radii, depth_image = rasterizer(
+            abs2D=screenspace_abs,
+            gaussian_scene = gaussian_scene,
+            high_error_pixels=high_error_pixels,
             means3D = means3D,
             means2D = means2D,
             dc = dc,
@@ -100,6 +116,9 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             cov3D_precomp = cov3D_precomp)
     else:
         rendered_image, radii, depth_image = rasterizer(
+            abs2D=screenspace_abs,
+            gaussian_scene = gaussian_scene,
+            high_error_pixels=high_error_pixels,
             means3D = means3D,
             means2D = means2D,
             shs = shs,
@@ -116,13 +135,20 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
+    if(num_count):
+        pc._gaussian_scene_num= gaussian_scene
+
     rendered_image = rendered_image.clamp(0, 1)
     out = {
         "render": rendered_image,
         "viewspace_points": screenspace_points,
+        "viewspace_abs": screenspace_abs,
         "visibility_filter" : (radii > 0).nonzero(),
         "radii": radii,
-        "depth" : depth_image
+        "depth" : depth_image,
+        "gaussian_scene": gaussian_scene,
+        "high_error_pixels": high_error_pixels,
         }
     
     return out
+

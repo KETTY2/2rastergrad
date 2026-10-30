@@ -1,0 +1,344 @@
+Using pip 26.2.2 from /venv/Explore4GS/lib/python3.12/site-packages/pip (python 3.12)
+Processing ./submodules/diff-gaussian-rasterization
+  Preparing metadata (pyproject.toml): started
+  Running command Preparing metadata (pyproject.toml)
+  running dist_info
+  creating /tmp/pip-modern-metadata-8a70kd4u/diff_gaussian_rasterization.egg-info
+  writing /tmp/pip-modern-metadata-8a70kd4u/diff_gaussian_rasterization.egg-info/PKG-INFO
+  writing dependency_links to /tmp/pip-modern-metadata-8a70kd4u/diff_gaussian_rasterization.egg-info/dependency_links.txt
+  writing top-level names to /tmp/pip-modern-metadata-8a70kd4u/diff_gaussian_rasterization.egg-info/top_level.txt
+  writing manifest file '/tmp/pip-modern-metadata-8a70kd4u/diff_gaussian_rasterization.egg-info/SOURCES.txt'
+  reading manifest file '/tmp/pip-modern-metadata-8a70kd4u/diff_gaussian_rasterization.egg-info/SOURCES.txt'
+  adding license file 'LICENSE.md'
+  writing manifest file '/tmp/pip-modern-metadata-8a70kd4u/diff_gaussian_rasterization.egg-info/SOURCES.txt'
+  creating '/tmp/pip-modern-metadata-8a70kd4u/diff_gaussian_rasterization-0.0.0.dist-info'
+  Preparing metadata (pyproject.toml): finished with status 'done'
+Building wheels for collected packages: diff_gaussian_rasterization
+  Building wheel for diff_gaussian_rasterization (pyproject.toml): started
+  Running command Building wheel for diff_gaussian_rasterization (pyproject.toml)
+  running bdist_wheel
+  running build
+  running build_py
+  copying diff_gaussian_rasterization/__init__.py -> build/lib.linux-x86_64-cpython-312/diff_gaussian_rasterization
+  running build_ext
+  W1030 06:16:44.638000 4845 site-packages/torch/utils/cpp_extension.py:535] There are no g++ version bounds defined for CUDA version 12.8
+  building 'diff_gaussian_rasterization._C' extension
+  [1/5] /usr/local/cuda/bin/nvcc --generate-dependencies-with-compile --dependency-output /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/build/temp.linux-x86_64-cpython-312/cuda_rasterizer/forward.o.d -I/venv/Explore4GS/lib/python3.12/site-packages/torch/include -I/venv/Explore4GS/lib/python3.12/site-packages/torch/include/torch/csrc/api/include -I/usr/local/cuda/include -I/venv/Explore4GS/include/python3.12 -c -c /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/cuda_rasterizer/forward.cu -o /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/build/temp.linux-x86_64-cpython-312/cuda_rasterizer/forward.o -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__ -D__CUDA_NO_BFLOAT16_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__ --expt-relaxed-constexpr --compiler-options ''"'"'-fPIC'"'"'' -I/root/Exploration-for-GS/submodules/diff-gaussian-rasterization/third_party/glm/ -DTORCH_API_INCLUDE_EXTENSION_H -DTORCH_EXTENSION_NAME=_C -gencode=arch=compute_86,code=compute_86 -gencode=arch=compute_86,code=sm_86 -std=c++17
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/cuda_rasterizer/auxiliary.h(163): warning #177-D: variable "p_proj" was declared but never referenced
+     float3 p_proj = { p_hom.x * p_w, p_hom.y * p_w, p_hom.z * p_w };
+            ^
+
+  Remark: The warnings can be suppressed with "-diag-suppress <warning-number>"
+
+  [2/5] /usr/local/cuda/bin/nvcc --generate-dependencies-with-compile --dependency-output /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/build/temp.linux-x86_64-cpython-312/cuda_rasterizer/backward.o.d -I/venv/Explore4GS/lib/python3.12/site-packages/torch/include -I/venv/Explore4GS/lib/python3.12/site-packages/torch/include/torch/csrc/api/include -I/usr/local/cuda/include -I/venv/Explore4GS/include/python3.12 -c -c /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/cuda_rasterizer/backward.cu -o /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/build/temp.linux-x86_64-cpython-312/cuda_rasterizer/backward.o -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__ -D__CUDA_NO_BFLOAT16_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__ --expt-relaxed-constexpr --compiler-options ''"'"'-fPIC'"'"'' -I/root/Exploration-for-GS/submodules/diff-gaussian-rasterization/third_party/glm/ -DTORCH_API_INCLUDE_EXTENSION_H -DTORCH_EXTENSION_NAME=_C -gencode=arch=compute_86,code=compute_86 -gencode=arch=compute_86,code=sm_86 -std=c++17
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/cuda_rasterizer/auxiliary.h(163): warning #177-D: variable "p_proj" was declared but never referenced
+     float3 p_proj = { p_hom.x * p_w, p_hom.y * p_w, p_hom.z * p_w };
+            ^
+
+  Remark: The warnings can be suppressed with "-diag-suppress <warning-number>"
+
+  [3/5] /usr/local/cuda/bin/nvcc --generate-dependencies-with-compile --dependency-output /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/build/temp.linux-x86_64-cpython-312/cuda_rasterizer/rasterizer_impl.o.d -I/venv/Explore4GS/lib/python3.12/site-packages/torch/include -I/venv/Explore4GS/lib/python3.12/site-packages/torch/include/torch/csrc/api/include -I/usr/local/cuda/include -I/venv/Explore4GS/include/python3.12 -c -c /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/cuda_rasterizer/rasterizer_impl.cu -o /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/build/temp.linux-x86_64-cpython-312/cuda_rasterizer/rasterizer_impl.o -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__ -D__CUDA_NO_BFLOAT16_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__ --expt-relaxed-constexpr --compiler-options ''"'"'-fPIC'"'"'' -I/root/Exploration-for-GS/submodules/diff-gaussian-rasterization/third_party/glm/ -DTORCH_API_INCLUDE_EXTENSION_H -DTORCH_EXTENSION_NAME=_C -gencode=arch=compute_86,code=compute_86 -gencode=arch=compute_86,code=sm_86 -std=c++17
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/cuda_rasterizer/auxiliary.h(163): warning #177-D: variable "p_proj" was declared but never referenced
+     float3 p_proj = { p_hom.x * p_w, p_hom.y * p_w, p_hom.z * p_w };
+            ^
+
+  Remark: The warnings can be suppressed with "-diag-suppress <warning-number>"
+
+  [4/5] c++ -MMD -MF /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/build/temp.linux-x86_64-cpython-312/ext.o.d -pthread -B /venv/Explore4GS/compiler_compat -fno-strict-overflow -Wsign-compare -DNDEBUG -O2 -Wall -fPIC -O2 -fno-merge-constants -isystem /venv/Explore4GS/include -fdebug-prefix-map=/home/conda/feedstock_root/build_artifacts/python-split_1793013978562/work=/usr/local/src/conda/python-split-3.12.16 -fPIC -O2 -fno-merge-constants -isystem /venv/Explore4GS/include -fdebug-prefix-map=/home/conda/feedstock_root/build_artifacts/python-split_1793013978562/work=/usr/local/src/conda/python-split-3.12.16 -fPIC -I/venv/Explore4GS/lib/python3.12/site-packages/torch/include -I/venv/Explore4GS/lib/python3.12/site-packages/torch/include/torch/csrc/api/include -I/usr/local/cuda/include -I/venv/Explore4GS/include/python3.12 -c -c /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/ext.cpp -o /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/build/temp.linux-x86_64-cpython-312/ext.o -DTORCH_API_INCLUDE_EXTENSION_H -DTORCH_EXTENSION_NAME=_C -std=c++17
+  [5/5] /usr/local/cuda/bin/nvcc --generate-dependencies-with-compile --dependency-output /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/build/temp.linux-x86_64-cpython-312/rasterize_points.o.d -I/venv/Explore4GS/lib/python3.12/site-packages/torch/include -I/venv/Explore4GS/lib/python3.12/site-packages/torch/include/torch/csrc/api/include -I/usr/local/cuda/include -I/venv/Explore4GS/include/python3.12 -c -c /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu -o /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/build/temp.linux-x86_64-cpython-312/rasterize_points.o -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__ -D__CUDA_NO_BFLOAT16_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__ --expt-relaxed-constexpr --compiler-options ''"'"'-fPIC'"'"'' -I/root/Exploration-for-GS/submodules/diff-gaussian-rasterization/third_party/glm/ -DTORCH_API_INCLUDE_EXTENSION_H -DTORCH_EXTENSION_NAME=_C -gencode=arch=compute_86,code=compute_86 -gencode=arch=compute_86,code=sm_86 -std=c++17
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu: In function ‘std::tuple<int, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor> RasterizeGaussiansCUDA(const at::Tensor&, at::Tensor&, const at::Tensor&, const at::Tensor&, const at::Tensor&, const at::Tensor&, const at::Tensor&, float, const at::Tensor&, const at::Tensor&, const at::Tensor&, float, float, int, int, const at::Tensor&, int, const at::Tensor&, bool, bool, bool)’:
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:75:45: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+     75 |   out_invdepthptr = out_invdepth.data<float>();
+        |                   ~~~~~~~~~~~~~~~~~~~~~~~~~~^~
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:97:140: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+     97 |           rendered = CudaRasterizer::Rasterizer::forward(
+        |                                                                                                                                            ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:97:193: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+     97 |           rendered = CudaRasterizer::Rasterizer::forward(
+        |                                                                                                                                                                                                 ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:97:233: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+     97 |           rendered = CudaRasterizer::Rasterizer::forward(
+        |                                                                                                                                                                                                                                         ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:97:311: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+     97 |           rendered = CudaRasterizer::Rasterizer::forward(
+        |                                                                                                                                                                                                                                                                                                                       ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:97:351: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+     97 |           rendered = CudaRasterizer::Rasterizer::forward(
+        |                                                                                                                                                                                                                                                                                                                                                               ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:97:502: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+     97 |           rendered = CudaRasterizer::Rasterizer::forward(
+        |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:97:545: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+     97 |           rendered = CudaRasterizer::Rasterizer::forward(
+        |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:97:588: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+     97 |           rendered = CudaRasterizer::Rasterizer::forward(
+        |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:97:627: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+     97 |           rendered = CudaRasterizer::Rasterizer::forward(
+        |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:97:702: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+     97 |           rendered = CudaRasterizer::Rasterizer::forward(
+        |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:97:769: warning: ‘T* at::Tensor::data() const [with T = int]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+     97 |           rendered = CudaRasterizer::Rasterizer::forward(
+        |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu: In function ‘std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor> RasterizeGaussiansBackwardCUDA(const at::Tensor&, at::Tensor&, const at::Tensor&, const at::Tensor&, const at::Tensor&, const at::Tensor&, const at::Tensor&, const at::Tensor&, const at::Tensor&, float, const at::Tensor&, const at::Tensor&, const at::Tensor&, float, float, const at::Tensor&, const at::Tensor&, const at::Tensor&, int, const at::Tensor&, const at::Tensor&, int, const at::Tensor&, const at::Tensor&, bool, bool)’:
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:188:54: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+    188 |         dL_dinvdepthsptr = dL_dinvdepths.data<float>();
+        |                           ~~~~~~~~~~~~~~~~~~~~~~~~~~~^~
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:189:60: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+    189 |         dL_dout_invdepthptr = dL_dout_invdepth.data<float>();
+        |                              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:194:101: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+    194 |           CudaRasterizer::Rasterizer::backward(P, degree, M, R,
+        |                                                              ~~                                     ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:194:154: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+    194 |           CudaRasterizer::Rasterizer::backward(P, degree, M, R,
+        |                                                                                                                                                          ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:194:203: warning: ‘T* at::Tensor::data() const [with T = bool]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+    194 |           CudaRasterizer::Rasterizer::backward(P, degree, M, R,
+        |                                                                                                                                                                                                           ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:194:243: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+    194 |           CudaRasterizer::Rasterizer::backward(P, degree, M, R,
+        |                                                                                                                                                                                                                                                   ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:194:278: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+    194 |           CudaRasterizer::Rasterizer::backward(P, degree, M, R,
+        |                                                                                                                                                                                                                                                                                      ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:194:317: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+    194 |           CudaRasterizer::Rasterizer::backward(P, degree, M, R,
+        |                                                                                                                                                                                                                                                                                                                             ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:194:359: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+    194 |           CudaRasterizer::Rasterizer::backward(P, degree, M, R,
+        |                                                                                                                                                                                                                                                                                                                                                                       ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:194:480: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+    194 |           CudaRasterizer::Rasterizer::backward(P, degree, M, R,
+        |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:194:523: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+    194 |           CudaRasterizer::Rasterizer::backward(P, degree, M, R,
+        |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:194:566: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+    194 |           CudaRasterizer::Rasterizer::backward(P, degree, M, R,
+        |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:194:605: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+    194 |           CudaRasterizer::Rasterizer::backward(P, degree, M, R,
+        |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:194:661: warning: ‘T* at::Tensor::data() const [with T = int]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+    194 |           CudaRasterizer::Rasterizer::backward(P, degree, M, R,
+        |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:194:906: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+    194 |           CudaRasterizer::Rasterizer::backward(P, degree, M, R,
+        |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:194:971: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+    194 |           CudaRasterizer::Rasterizer::backward(P, degree, M, R,
+        |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:194:1013: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+    194 |           CudaRasterizer::Rasterizer::backward(P, degree, M, R,
+        |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:194:1055: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+    194 |           CudaRasterizer::Rasterizer::backward(P, degree, M, R,
+        |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:194:1099: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+    194 |           CudaRasterizer::Rasterizer::backward(P, degree, M, R,
+        |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:194:1142: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+    194 |           CudaRasterizer::Rasterizer::backward(P, degree, M, R,
+        |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:194:1204: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+    194 |           CudaRasterizer::Rasterizer::backward(P, degree, M, R,
+        |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:194:1246: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+    194 |           CudaRasterizer::Rasterizer::backward(P, degree, M, R,
+        |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:194:1288: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+    194 |           CudaRasterizer::Rasterizer::backward(P, degree, M, R,
+        |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:194:1327: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+    194 |           CudaRasterizer::Rasterizer::backward(P, degree, M, R,
+        |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:194:1370: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+    194 |           CudaRasterizer::Rasterizer::backward(P, degree, M, R,
+        |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:194:1416: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+    194 |           CudaRasterizer::Rasterizer::backward(P, degree, M, R,
+        |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu: In function ‘at::Tensor markVisible(at::Tensor&, at::Tensor&, at::Tensor&)’:
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:248:87: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+    248 |         CudaRasterizer::Rasterizer::markVisible(P,
+        |                                                                                       ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:248:130: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+    248 |         CudaRasterizer::Rasterizer::markVisible(P,
+        |                                                                                                                                  ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:248:173: warning: ‘T* at::Tensor::data() const [with T = float]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+    248 |         CudaRasterizer::Rasterizer::markVisible(P,
+        |                                                                                                                                                                             ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/rasterize_points.cu:248:212: warning: ‘T* at::Tensor::data() const [with T = bool]’ is deprecated: Tensor.data<T>() is deprecated. Please use Tensor.data_ptr<T>() instead. [-Wdeprecated-declarations]
+    248 |         CudaRasterizer::Rasterizer::markVisible(P,
+        |                                                                                                                                                                                                                    ^
+  /venv/Explore4GS/lib/python3.12/site-packages/torch/include/ATen/core/TensorBody.h:251:1: note: declared here
+    251 |   T * data() const {
+        | ^ ~~
+  g++ -pthread -B /venv/Explore4GS/compiler_compat -fno-strict-overflow -Wsign-compare -DNDEBUG -O2 -Wall -fPIC -O2 -fno-merge-constants -isystem /venv/Explore4GS/include -fdebug-prefix-map=/home/conda/feedstock_root/build_artifacts/python-split_1793013978562/work=/usr/local/src/conda/python-split-3.12.16 -fPIC -O2 -fno-merge-constants -isystem /venv/Explore4GS/include -fdebug-prefix-map=/home/conda/feedstock_root/build_artifacts/python-split_1793013978562/work=/usr/local/src/conda/python-split-3.12.16 -shared -Wl,--allow-shlib-undefined -Wl,-rpath,/venv/Explore4GS/lib -Wl,-rpath-link,/venv/Explore4GS/lib -L/venv/Explore4GS/lib -Wl,--allow-shlib-undefined -Wl,-rpath,/venv/Explore4GS/lib -Wl,-rpath-link,/venv/Explore4GS/lib -L/venv/Explore4GS/lib /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/build/temp.linux-x86_64-cpython-312/cuda_rasterizer/backward.o /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/build/temp.linux-x86_64-cpython-312/cuda_rasterizer/forward.o /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/build/temp.linux-x86_64-cpython-312/cuda_rasterizer/rasterizer_impl.o /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/build/temp.linux-x86_64-cpython-312/ext.o /root/Exploration-for-GS/submodules/diff-gaussian-rasterization/build/temp.linux-x86_64-cpython-312/rasterize_points.o -L/venv/Explore4GS/lib/python3.12/site-packages/torch/lib -L/usr/local/cuda/lib64 -lc10 -ltorch -ltorch_cpu -ltorch_python -lcudart -lc10_cuda -ltorch_cuda -o build/lib.linux-x86_64-cpython-312/diff_gaussian_rasterization/_C.cpython-312-x86_64-linux-gnu.so
+  installing to build/bdist.linux-x86_64/wheel
+  running install
+  running install_lib
+  creating build/bdist.linux-x86_64/wheel
+  creating build/bdist.linux-x86_64/wheel/diff_gaussian_rasterization
+  copying build/lib.linux-x86_64-cpython-312/diff_gaussian_rasterization/__init__.py -> build/bdist.linux-x86_64/wheel/./diff_gaussian_rasterization
+  copying build/lib.linux-x86_64-cpython-312/diff_gaussian_rasterization/_C.cpython-312-x86_64-linux-gnu.so -> build/bdist.linux-x86_64/wheel/./diff_gaussian_rasterization
+  running install_egg_info
+  running egg_info
+  writing diff_gaussian_rasterization.egg-info/PKG-INFO
+  writing dependency_links to diff_gaussian_rasterization.egg-info/dependency_links.txt
+  writing top-level names to diff_gaussian_rasterization.egg-info/top_level.txt
+  reading manifest file 'diff_gaussian_rasterization.egg-info/SOURCES.txt'
+  adding license file 'LICENSE.md'
+  writing manifest file 'diff_gaussian_rasterization.egg-info/SOURCES.txt'
+  Copying diff_gaussian_rasterization.egg-info to build/bdist.linux-x86_64/wheel/./diff_gaussian_rasterization-0.0.0-py3.12.egg-info
+  running install_scripts
+  creating build/bdist.linux-x86_64/wheel/diff_gaussian_rasterization-0.0.0.dist-info/WHEEL
+  creating '/tmp/pip-ephem-wheel-cache-866gw76t/wheels/48/d3/e9/8ccd83666ef3e9c3cce6d68e8593a85ed9629d599726ee79b0/tmpcrgvo_wx/.tmp-n500sctu/diff_gaussian_rasterization-0.0.0-cp312-cp312-linux_x86_64.whl' and adding 'build/bdist.linux-x86_64/wheel' to it
+  adding 'diff_gaussian_rasterization/_C.cpython-312-x86_64-linux-gnu.so'
+  adding 'diff_gaussian_rasterization/__init__.py'
+  adding 'diff_gaussian_rasterization-0.0.0.dist-info/licenses/LICENSE.md'
+  adding 'diff_gaussian_rasterization-0.0.0.dist-info/METADATA'
+  adding 'diff_gaussian_rasterization-0.0.0.dist-info/WHEEL'
+  adding 'diff_gaussian_rasterization-0.0.0.dist-info/top_level.txt'
+  adding 'diff_gaussian_rasterization-0.0.0.dist-info/RECORD'
+  removing build/bdist.linux-x86_64/wheel
+  Building wheel for diff_gaussian_rasterization (pyproject.toml): finished with status 'done'
+  Created wheel for diff_gaussian_rasterization: filename=diff_gaussian_rasterization-0.0.0-cp312-cp312-linux_x86_64.whl size=848503 sha256=06ab7df6a4a208a3cbeef179dce0362992a656d45522b21b61bb7440a7d22941
+  Stored in directory: /tmp/pip-ephem-wheel-cache-866gw76t/wheels/48/d3/e9/8ccd83666ef3e9c3cce6d68e8593a85ed9629d599726ee79b0
+Successfully built diff_gaussian_rasterization
+Installing collected packages: diff_gaussian_rasterization
+  Attempting uninstall: diff_gaussian_rasterization
+    Found existing installation: diff_gaussian_rasterization 0.0.0
+    Uninstalling diff_gaussian_rasterization-0.0.0:
+      Removing file or directory /venv/Explore4GS/lib/python3.12/site-packages/diff_gaussian_rasterization-0.0.0.dist-info/
+      Removing file or directory /venv/Explore4GS/lib/python3.12/site-packages/diff_gaussian_rasterization/
+      Successfully uninstalled diff_gaussian_rasterization-0.0.0
+Successfully installed diff_gaussian_rasterization-0.0.0
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.

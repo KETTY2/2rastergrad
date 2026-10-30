@@ -10,3 +10,4 @@ screenshots
 __pycache__
 eval
 data
+datasets/
