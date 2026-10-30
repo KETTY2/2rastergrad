@@ -648,6 +648,7 @@ class GaussianModel:
     def random_split_explore(
         self,
         viewspace_abs_tensor,
+        viewspace_point_tensor,
         max_grad,
         extent,
         candidate_mask=None,
@@ -668,8 +669,11 @@ class GaussianModel:
         grad_norm = torch.nan_to_num(
             grad_norm, nan=0.0, posinf=0.0, neginf=0.0
         )
-
-        selected_pts_mask = grad_norm >= max_grad
+        real_grad_norm= torch.norm(viewspace_point_tensor.grad[:, ::2], dim=-1)
+        real_grad_norm = torch.nan_to_num(
+            real_grad_norm, nan=0.0, posinf=0.0, neginf=0.0
+        )
+        selected_pts_mask = (grad_norm >= max_grad*3) & (grad_norm >= real_grad_norm*3)
 
         if candidate_mask is not None:
             candidate_mask = torch.as_tensor(

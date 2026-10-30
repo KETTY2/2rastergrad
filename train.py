@@ -17,7 +17,7 @@ from utils.loss_utils import l1_loss, ssim
 from gaussian_renderer import render, network_gui 
 import sys
 from scene import Scene, GaussianModel
-from utils.general_utils import safe_state, get_expon_lr_func
+from utils.general_utils import safe_state, get_expon_lr_func, build_rotation
 import uuid
 from tqdm import tqdm
 from utils.image_utils import psnr
@@ -48,17 +48,21 @@ def _camera_forward_world(camera):
     return direction / torch.linalg.vector_norm(direction).clamp_min(1e-8)
 
 def _closest_line_points(q1, d1, q2, d2):
-    """Return closest points p1, p2 on two batches of 3D lines, their gap, and validity."""
+    """Closest points on paired 3D lines; directions may be shared or per Gaussian."""
+    if d1.ndim == 1:
+        d1 = d1.unsqueeze(0).expand_as(q1)
+    if d2.ndim == 1:
+        d2 = d2.unsqueeze(0).expand_as(q2)
     w = q1 - q2
-    b = torch.dot(d1, d2)
-    d = torch.sum(w * d1[None, :], dim=-1)
-    e = torch.sum(w * d2[None, :], dim=-1)
+    b = torch.sum(d1 * d2, dim=-1)
+    d = torch.sum(w * d1, dim=-1)
+    e = torch.sum(w * d2, dim=-1)
     denom = 1.0 - b * b
     safe_denom = denom.clamp_min(1e-8)
     s = (b * e - d) / safe_denom
     t = (e - b * d) / safe_denom
-    p1 = q1 + s[:, None] * d1[None, :]
-    p2 = q2 + t[:, None] * d2[None, :]
+    p1 = q1 + s[:, None] * d1
+    p2 = q2 + t[:, None] * d2
     gap = torch.linalg.vector_norm(p1 - p2, dim=-1)
     valid = (
         (denom > 1e-4)
@@ -67,6 +71,70 @@ def _closest_line_points(q1, d1, q2, d2):
         & torch.isfinite(gap)
     )
     return p1, p2, gap, valid
+
+def _two_view_line_update(current, grad1, grad2, direction1, direction2, min_target=None):
+    """Build eta=1 proposals, use closest-line midpoint, and preserve mean grad norm."""
+    q1 = current - grad1
+    q2 = current - grad2
+    p1, p2, gap, line_valid = _closest_line_points(
+        q1, direction1, q2, direction2
+    )
+    target = ( p2)
+    if min_target is not None:
+        target = target.clamp_min(min_target)
+    target_grad = current - target
+    target_grad_norm = torch.linalg.vector_norm(target_grad, dim=-1)
+    grad2_norm = torch.linalg.vector_norm(grad2, dim=-1)
+    usable = (
+        line_valid
+        & torch.isfinite(grad1).all(dim=-1)
+        & torch.isfinite(grad2).all(dim=-1)
+        & torch.isfinite(target_grad).all(dim=-1)
+        & (grad2_norm > 1e-12)
+        & (target_grad_norm > 1e-8)
+    )
+    redirected = target_grad / target_grad_norm.clamp_min(1e-8)[:, None]
+    redirected = redirected * grad2_norm[:, None]
+    return target, redirected, usable, gap
+
+def _quat_gradient_to_local_rotation_tangent(quaternion, grad_quaternion):
+    """Map a quaternion gradient to a 3D local-axis infinitesimal-rotation gradient."""
+    w = quaternion[:, :1]
+    v = quaternion[:, 1:]
+    x, y, z = v.unbind(dim=-1)
+    n = quaternion.shape[0]
+    J = torch.zeros((n, 4, 3), dtype=quaternion.dtype, device=quaternion.device)
+    J[:, 0, :] = -0.5 * v
+    J[:, 1, 0] = 0.5 * w[:, 0]
+    J[:, 1, 1] = -0.5 * z
+    J[:, 1, 2] = 0.5 * y
+    J[:, 2, 0] = 0.5 * z
+    J[:, 2, 1] = 0.5 * w[:, 0]
+    J[:, 2, 2] = -0.5 * x
+    J[:, 3, 0] = -0.5 * y
+    J[:, 3, 1] = 0.5 * x
+    J[:, 3, 2] = 0.5 * w[:, 0]
+    tangent_grad = torch.bmm(J.transpose(1, 2), grad_quaternion.unsqueeze(-1)).squeeze(-1)
+    return tangent_grad, J
+
+def _local_rotation_tangent_gradient_to_quat(J, tangent_grad):
+    """Map a desired tangent-space gradient back to the raw quaternion gradient."""
+    # For a unit quaternion, J^T J = 1/4 I, so this is the minimum-norm lift.
+    return 4.0 * torch.bmm(J, tangent_grad.unsqueeze(-1)).squeeze(-1)
+
+def _world_direction_to_gaussian_local(direction_world, rotation_matrices):
+    """Express one world-space camera direction in every Gaussian's local frame."""
+    count = rotation_matrices.shape[0]
+    direction = direction_world.to(
+        device=rotation_matrices.device, dtype=rotation_matrices.dtype
+    ).expand(count, 3)
+    direction_local = torch.bmm(
+        rotation_matrices.transpose(1, 2), direction.unsqueeze(-1)
+    ).squeeze(-1)
+    return direction_local / torch.linalg.vector_norm(
+        direction_local, dim=-1, keepdim=True
+    ).clamp_min(1e-8)
+
 
 def _view_loss(render_pkg, camera, opt, depth_l1_weight, iteration, dataset):
     image = render_pkg["render"]
@@ -109,9 +177,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     debug_csv.writerow([
         "iteration", "gaussian_index", "flagged", "history_count", "camera_index",
         "x", "y", "z", "backward_grad_pre_redirect_x", "backward_grad_pre_redirect_y", "backward_grad_pre_redirect_z",
-        "line_direction_x", "line_direction_y", "line_direction_z",
-        "applied_grad_x", "applied_grad_y", "applied_grad_z",
-        "candidate_x", "candidate_y", "candidate_z", "status",
+        "line_direction_x", "line_direction_y", "line_direction_z", "status",
     ])
     gaussians = GaussianModel(dataset.sh_degree, opt.optimizer_type)
     scene = Scene(dataset, gaussians)
@@ -167,8 +233,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if iteration % 1000 == 0:
             gaussians.oneupSHdegree()
 
-        paired_mode = (
-            iteration >= num_cameras * 30
+        paired_mode = (## 30 at 5cyclesplit
+            iteration >= num_cameras * 500
         )
         if paired_mode:
             viewpoint_cam0=viewpoint_cam
@@ -264,53 +330,143 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # num_cameras * 60
         if paired_mode:
             with torch.no_grad():
-                for parameter, grad_view1, grad_view2 in zip(redirect_params[1:], grads1[1:], grads2[1:]):
-                    if grad_view1 is None and grad_view2 is None:
-                        continue
-                    if grad_view1 is None:
-                        grad_view1 = torch.zeros_like(parameter)
-                    if grad_view2 is None:
-                        grad_view2 = torch.zeros_like(parameter)
-                    parameter_grad =grad_view2
-                    if parameter.grad is None:
-                        parameter.grad = parameter_grad.detach().clone()
+                def grad_or_zero(grad, parameter):
+                    return grad.detach() if grad is not None else torch.zeros_like(parameter)
+
+                mean_grads = []
+                for parameter, grad1, grad2 in zip(
+                    redirect_params, grads1, grads2
+                ):
+                    if grad1 is None and grad2 is None:
+                        mean_grads.append(None)
                     else:
-                        parameter.grad.copy_(parameter_grad)
+                        g1 = grad_or_zero(grad1, parameter)
+                        g2 = grad_or_zero(grad2, parameter)
+                        mean_grads.append( g2)
 
-            with torch.no_grad():
+                for parameter, mean_grad in zip(redirect_params, mean_grads):
+                    if mean_grad is None:
+                        parameter.grad = None
+                    elif parameter.grad is None:
+                        parameter.grad = mean_grad.clone()
+                    else:
+                        parameter.grad.copy_(mean_grad)
+
                 active = gaussians._gaussian_scene_num[:, 0] > 0.5
-                current_xyz = gaussians._xyz.detach()
-                grad1 = grads1[0]
-                grad2 = grads2[0]
-                g1 = grad1.detach() if grad1 is not None else torch.zeros_like(current_xyz)
-                g2 = grad2.detach() if grad2 is not None else torch.zeros_like(current_xyz)
-                q1 = current_xyz - g1  # eta = 1
-                q2 = current_xyz - g2  # eta = 1
-                d1 = camera_forwards[camera_indices[0]].to(device=current_xyz.device, dtype=current_xyz.dtype)
-                d2 = camera_forwards[camera_indices[1]].to(device=current_xyz.device, dtype=current_xyz.dtype)
-                grad1_norm = torch.linalg.vector_norm(g1, dim=-1)
-                grad2_norm = torch.linalg.vector_norm(g2, dim=-1)
-                p1, p2, line_gap, line_valid = _closest_line_points(q1, d1, q2, d2)
-                target = 0.5 * (p1 + p2)
-
-                visible_both = (render_pkgs[0]["radii"] > 0) & (render_pkgs[1]["radii"] > 0)
-                mean_grad_norm = grad2_norm
-                target_grad = current_xyz - target
-                target_grad_norm = torch.linalg.vector_norm(target_grad, dim=-1)
-                usable = (
-                    active & visible_both & line_valid
-                    & torch.isfinite(g1).all(dim=-1)
-                    & torch.isfinite(g2).all(dim=-1)
-                    & torch.isfinite(target_grad).all(dim=-1)
-                    & (grad1_norm > 1e-12) & (grad2_norm > 1e-12)
-                    & (mean_grad_norm > 1e-12) & (target_grad_norm > 1e-8)
+                visible_both = (
+                    (render_pkgs[0]["radii"] > 0)
+                    & (render_pkgs[1]["radii"] > 0)
                 )
-                combined_grad_before = gaussians._xyz.grad.detach().clone() if gaussians._xyz.grad is not None else None
-                if gaussians._xyz.grad is not None and usable.any():
-                    redirected = target_grad[usable] / target_grad_norm[usable].unsqueeze(-1)
-                    redirected = redirected * mean_grad_norm[usable].unsqueeze(-1)
-                    gaussians._xyz.grad[usable] = redirected
+                update_mask = active & visible_both
 
+                d1_world = camera_forwards[camera_indices[0]].to(
+                    device=gaussians._xyz.device,
+                    dtype=gaussians._xyz.dtype,
+                )
+                d2_world = camera_forwards[camera_indices[1]].to(
+                    device=gaussians._xyz.device,
+                    dtype=gaussians._xyz.dtype,
+                )
+
+                current_xyz = gaussians._xyz.detach()
+                xyz1 = grad_or_zero(grads1[0], gaussians._xyz)
+                xyz2 = grad_or_zero(grads2[0], gaussians._xyz)
+
+                xyz_target, xyz_redirected, xyz_valid, xyz_gap = (
+                    _two_view_line_update(
+                        current_xyz, xyz1, xyz2, d1_world, d2_world
+                    )
+                )
+                xyz_usable = update_mask & xyz_valid
+
+                if gaussians._xyz.grad is not None and xyz_usable.any():
+                    gaussians._xyz.grad[xyz_usable] = \
+                        xyz_redirected[xyz_usable]
+
+                
+                current_scale = gaussians.get_scaling.detach()
+                scale_denominator = current_scale.clamp_min(1e-8)
+
+                ####
+                scale_log_grad1 = grad_or_zero(
+                    grads1[1], gaussians._scaling
+                )
+                scale_log_grad2 = grad_or_zero(
+                    grads2[1], gaussians._scaling
+                )
+                scale_grad1 = scale_log_grad1 / scale_denominator
+                scale_grad2 = scale_log_grad2 / scale_denominator
+
+                current_rotation = gaussians.get_rotation.detach()
+                rotation_matrices = build_rotation(current_rotation)
+
+                d1_local = _world_direction_to_gaussian_local(
+                    d1_world, rotation_matrices
+                )
+                d2_local = _world_direction_to_gaussian_local(
+                    d2_world, rotation_matrices
+                )
+
+                scale_target, scale_redirected_physical, scale_valid, scale_gap = (
+                    _two_view_line_update(
+                        current_scale,
+                        scale_grad1,
+                        scale_grad2,
+                        d1_local,
+                        d2_local,
+                        min_target=1e-6,
+                    )
+                )
+                scale_usable = update_mask & scale_valid
+
+                if gaussians._scaling.grad is not None and scale_usable.any():
+                    scale_redirected_log = (
+                        scale_redirected_physical / scale_denominator
+                    )
+                    gaussians._scaling.grad[scale_usable] = \
+                        scale_redirected_log[scale_usable]
+
+              ###
+                rotation_grad1 = grad_or_zero(
+                    grads1[2], gaussians._rotation
+                )
+                rotation_grad2 = grad_or_zero(
+                    grads2[2], gaussians._rotation
+                )
+
+                tangent1, tangent_jacobian = \
+                    _quat_gradient_to_local_rotation_tangent(
+                        current_rotation, rotation_grad1
+                    )
+                tangent2, _ = _quat_gradient_to_local_rotation_tangent(
+                    current_rotation, rotation_grad2
+                )
+
+                zero_tangent = torch.zeros_like(tangent1)
+                (
+                    rotation_target,
+                    rotation_tangent_redirected,
+                    rotation_valid,
+                    rotation_gap,
+                ) = _two_view_line_update(
+                    zero_tangent,
+                    tangent1,
+                    tangent2,
+                    d1_local,
+                    d2_local,
+                )
+                rotation_usable = update_mask & rotation_valid
+
+                if gaussians._rotation.grad is not None and rotation_usable.any():
+                    redirected_q_grad = \
+                        _local_rotation_tangent_gradient_to_quat(
+                            tangent_jacobian,
+                            rotation_tangent_redirected,
+                        )
+                    gaussians._rotation.grad[rotation_usable] = \
+                        redirected_q_grad[rotation_usable]
+
+           
                 # Log the first flagged Gaussian in the current pair.
                 ids = torch.where(active)[0]
                 debug_id = int(ids[0].item()) if ids.numel() else -1
@@ -319,25 +475,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 debug_xyz = _csv_vec(current_xyz, debug_id) if debug_id_valid else ["", "", ""]
                 debug_grad1 = _csv_vec(g1, debug_id) if debug_id_valid else ["", "", ""]
                 debug_grad2 = _csv_vec(g2, debug_id) if debug_id_valid else ["", "", ""]
-                debug_target = _csv_vec(target, debug_id) if debug_id_valid else ["", "", ""]
-                debug_before = (
-                    _csv_vec(combined_grad_before, debug_id)
-                    if debug_id_valid and combined_grad_before is not None else ["", "", ""]
-                )
+                
                 debug_status = "no_flagged_gaussian"
                 if debug_id_valid:
                     debug_status = "not_usable_or_skipped"
-                    if bool(usable[debug_id]):
-                        debug_status = "gradient_redirected"
-                    elif not bool(visible_both[debug_id]):
-                        debug_status = "not_visible_in_both_views"
-                    elif not bool(line_valid[debug_id]):
-                        debug_status = "nearly_parallel_or_invalid_lines"
+                    
 
             debug_csv.writerow([
                 iteration, debug_id, debug_flagged, camera_indices[0], camera_indices[1],
-                *debug_xyz, *debug_grad1, *debug_grad2, *debug_target,
-                *debug_before,
+                *debug_xyz, *debug_grad1, *debug_grad2,
                 *(_csv_vec(gaussians._xyz.grad, debug_id) if debug_id_valid and gaussians._xyz.grad is not None else ["", "", ""]),
                 debug_status,
             ])
@@ -383,6 +529,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     and iteration % opt.densification_interval == 0
                 )
 
+                camera_cycle = (iteration - 1) // num_cameras + 1
+                is_fifth_cycle = camera_cycle % 5 == 0
+
                 if do_densify:
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
                     gaussians.densify_and_prune(
@@ -392,10 +541,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                         size_threshold,
                         radii,
                     )
-                elif iteration < opt.densify_until_iter and iteration > opt.densify_from_iter:
+                elif (iteration < opt.densify_until_iter and iteration > opt.densify_from_iter  and is_fifth_cycle):
                     gaussians.random_split_explore(
                         split_pkg["viewspace_abs"],
-                        max_grad=opt.densify_grad_threshold * 2,
+                        split_pkg["viewspace_points"],
+                        max_grad=opt.densify_grad_threshold,
                         extent=scene.cameras_extent,
                         candidate_mask=None,
                     )
