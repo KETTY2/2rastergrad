@@ -86,13 +86,7 @@ class GaussianModel:
             self.denom,
             self.optimizer.state_dict(),
             self.spatial_lr_scale,
-            self.error_line_origin_history,
-            self.error_line_dir_history,
-            self.error_camera_history,
-            self.error_history_ptr,
-            self.error_history_count,
-            self._gaussian_uid,
-            self._next_gaussian_uid,
+            
         )
     
     def restore(self, model_args, training_args):
@@ -113,26 +107,12 @@ class GaussianModel:
         self.xyz_gradient_accum = xyz_gradient_accum
         self.denom = denom
 
-        if len(model_args) >= 18:
-            (
-                self.error_line_origin_history,
-                self.error_line_dir_history,
-                self.error_camera_history,
-                self.error_history_ptr,
-                self.error_history_count,
-            ) = model_args[13:18]
-            if self.error_line_origin_history.shape[1] != 1:
-                self.init_error_history()
-        else:
-            self.init_error_history()
-
-        if len(model_args) >= 20:
-            self._gaussian_uid = model_args[18]
-            self._next_gaussian_uid = int(model_args[19])
-        else:
-            self.init_gaussian_uids()
-
         self.optimizer.load_state_dict(opt_dict)
+
+        # Per-Gaussian buffers are not checkpointed; rebuild them so their
+        # length matches the restored number of Gaussians.
+        self.init_gaussian_uids()
+        self.init_error_history()
 
     @property
     def get_scaling(self):
@@ -286,15 +266,36 @@ class GaussianModel:
         self.error_line_dir_history = torch.zeros(
             (n, 1, 3), dtype=self._xyz.dtype, device=device
         )
-        self.error_camera_history = torch.full(
-            (n, 1), -1, dtype=torch.int32, device=device
-        )
-        self.error_history_ptr = torch.zeros(
-            n, dtype=torch.int64, device=device
-        )
+       
         self.error_history_count = torch.zeros(
             n, dtype=torch.int32, device=device
         )
+        self.error_gradient_max = torch.zeros(
+            n, dtype=self._xyz.dtype, device=device
+        )
+        
+        self.init_parameter_error_history()
+
+    def init_parameter_error_history(self):
+        n = self._xyz.shape[0]
+        device = self._xyz.device
+        dtype = self._xyz.dtype
+        self.scale_error_line_origin_history = torch.zeros(
+            (n, 1, 3), dtype=dtype, device=device
+        )
+        self.scale_error_line_dir_history = torch.zeros(
+            (n, 1, 3), dtype=dtype, device=device
+        )
+       
+        self.rotation_error_line_origin_history = torch.zeros(
+            (n, 1, 3), dtype=dtype, device=device
+        )
+        self.rotation_error_line_dir_history = torch.zeros(
+            (n, 1, 3), dtype=dtype, device=device
+        )
+        
+
+  
 
     def update_learning_rate(self, iteration):
         ''' Learning rate scheduling per step '''
@@ -450,11 +451,18 @@ class GaussianModel:
 
         self._gaussian_scene_num =  self._gaussian_scene_num[valid_points_mask]
         self._gaussian_uid = self._gaussian_uid[valid_points_mask]
+        
         self.error_line_origin_history = self.error_line_origin_history[valid_points_mask]
         self.error_line_dir_history = self.error_line_dir_history[valid_points_mask]
-        self.error_camera_history = self.error_camera_history[valid_points_mask]
-        self.error_history_ptr = self.error_history_ptr[valid_points_mask]
         self.error_history_count = self.error_history_count[valid_points_mask]
+        self.error_gradient_max = self.error_gradient_max[valid_points_mask]
+
+        self.scale_error_line_origin_history = self.scale_error_line_origin_history[valid_points_mask]
+        self.scale_error_line_dir_history = self.scale_error_line_dir_history[valid_points_mask]
+
+        self.rotation_error_line_origin_history = self.rotation_error_line_origin_history[valid_points_mask]
+        self.rotation_error_line_dir_history = self.rotation_error_line_dir_history[valid_points_mask]
+
 
         self.xyz_gradient_accum = self.xyz_gradient_accum[valid_points_mask]
 
@@ -484,7 +492,16 @@ class GaussianModel:
 
         return optimizable_tensors
 
-    def densification_postfix(self, new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_tmp_radii,new_gaussian_scene_num):
+    def densification_postfix(self, new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_tmp_radii,new_gaussian_scene_num,new_error_line_origin_history,
+            new_error_line_dir_history ,
+            new_error_history_count ,
+            new_error_gradient_max ,
+
+            new_scale_error_line_origin_history ,
+            new_scale_error_line_dir_history ,
+
+            new_rotation_error_line_origin_history ,
+            new_rotation_error_line_dir_history,  parent_indices):
         d = {"xyz": new_xyz,
         "f_dc": new_features_dc,
         "f_rest": new_features_rest,
@@ -501,29 +518,20 @@ class GaussianModel:
         self._rotation = optimizable_tensors["rotation"]
 
         self._gaussian_scene_num = torch.cat((self._gaussian_scene_num,new_gaussian_scene_num))
+        self.error_line_origin_history = torch.cat((self.error_line_origin_history,new_error_line_origin_history))
+        self.error_line_dir_history = torch.cat((self.error_line_dir_history,new_error_line_dir_history))
+        self.error_history_count = torch.cat((self.error_history_count,new_error_history_count))
+        self.error_gradient_max = torch.cat((self.error_gradient_max,new_error_gradient_max))
+
+        self.scale_error_line_origin_history = torch.cat((self.scale_error_line_origin_history, new_scale_error_line_origin_history))
+        self.scale_error_line_dir_history = torch.cat((self.scale_error_line_dir_history, new_scale_error_line_dir_history))
+
+        self.rotation_error_line_origin_history = torch.cat((self.rotation_error_line_origin_history, new_rotation_error_line_origin_history))
+        self.rotation_error_line_dir_history = torch.cat((self.rotation_error_line_dir_history, new_rotation_error_line_dir_history))
+        
         num_new = new_xyz.shape[0]
         device = self._xyz.device
         self.append_gaussian_uids(num_new)
-        self.error_line_origin_history = torch.cat((
-            self.error_line_origin_history,
-            torch.zeros(num_new, 1, 3, dtype=self._xyz.dtype, device=device),
-        ))
-        self.error_line_dir_history = torch.cat((
-            self.error_line_dir_history,
-            torch.zeros(num_new, 1, 3, dtype=self._xyz.dtype, device=device),
-        ))
-        self.error_camera_history = torch.cat((
-            self.error_camera_history,
-            torch.full((num_new, 1), -1, dtype=torch.int32, device=device),
-        ))
-        self.error_history_ptr = torch.cat((
-            self.error_history_ptr,
-            torch.zeros(num_new, dtype=torch.int64, device=device),
-        ))
-        self.error_history_count = torch.cat((
-            self.error_history_count,
-            torch.zeros(num_new, dtype=torch.int32, device=device),
-        ))
         self.tmp_radii = torch.cat((self.tmp_radii, new_tmp_radii))
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
@@ -580,6 +588,18 @@ class GaussianModel:
         # Current behavior: child Gaussians inherit the parent's flag
         new_gaussian_scene_num = self._gaussian_scene_num[selected_pts_mask].repeat(N, 1)
 
+        new_error_line_origin_history = self.error_line_origin_history[selected_pts_mask].repeat(N, 1,1)
+        new_error_line_dir_history = self.error_line_dir_history[selected_pts_mask].repeat(N, 1,1)
+        new_error_history_count = self.error_history_count[selected_pts_mask].repeat(N)
+        new_error_gradient_max = self.error_gradient_max[selected_pts_mask].repeat(N)
+
+        new_scale_error_line_origin_history = self.scale_error_line_origin_history[selected_pts_mask].repeat(N, 1, 1)
+        new_scale_error_line_dir_history = self.scale_error_line_dir_history[selected_pts_mask].repeat(N, 1,1)
+
+        new_rotation_error_line_origin_history = self.rotation_error_line_origin_history[selected_pts_mask].repeat(N, 1, 1)
+        new_rotation_error_line_dir_history = self.rotation_error_line_dir_history[selected_pts_mask].repeat(N, 1, 1)
+
+
         self.densification_postfix(
             new_xyz,
             new_features_dc,
@@ -589,6 +609,17 @@ class GaussianModel:
             new_rotation,
             new_tmp_radii,
             new_gaussian_scene_num,
+            new_error_line_origin_history,
+            new_error_line_dir_history ,
+            new_error_history_count ,
+            new_error_gradient_max ,
+
+            new_scale_error_line_origin_history ,
+            new_scale_error_line_dir_history ,
+
+            new_rotation_error_line_origin_history ,
+            new_rotation_error_line_dir_history, 
+            torch.where(selected_pts_mask)[0].repeat(N),
         )
 
         # Remove split parent Gaussians while keeping new child Gaussians
@@ -632,6 +663,17 @@ class GaussianModel:
 
         # Current behavior: clone copies inherit the parent's flag
         new_gaussian_scene_num = self._gaussian_scene_num[selected_pts_mask]
+        new_error_line_origin_history = self.error_line_origin_history[selected_pts_mask]
+        new_error_line_dir_history = self.error_line_dir_history[selected_pts_mask]
+        new_error_history_count = self.error_history_count[selected_pts_mask]
+        new_error_gradient_max = self.error_gradient_max[selected_pts_mask]
+
+        new_scale_error_line_origin_history = self.scale_error_line_origin_history[selected_pts_mask]
+        new_scale_error_line_dir_history = self.scale_error_line_dir_history[selected_pts_mask]
+
+        new_rotation_error_line_origin_history = self.rotation_error_line_origin_history[selected_pts_mask]
+        new_rotation_error_line_dir_history = self.rotation_error_line_dir_history[selected_pts_mask]
+
 
         self.densification_postfix(
             new_xyz,
@@ -642,6 +684,17 @@ class GaussianModel:
             new_rotation,
             new_tmp_radii,
             new_gaussian_scene_num,
+            new_error_line_origin_history,
+            new_error_line_dir_history ,
+            new_error_history_count ,
+            new_error_gradient_max ,
+
+            new_scale_error_line_origin_history ,
+            new_scale_error_line_dir_history ,
+
+            new_rotation_error_line_origin_history ,
+            new_rotation_error_line_dir_history, 
+            torch.where(selected_pts_mask)[0],
         )
 
     @torch.no_grad()
@@ -669,7 +722,7 @@ class GaussianModel:
         grad_norm = torch.nan_to_num(
             grad_norm, nan=0.0, posinf=0.0, neginf=0.0
         )
-        real_grad_norm= torch.norm(viewspace_point_tensor.grad[:, ::2], dim=-1)
+        real_grad_norm= torch.norm(viewspace_point_tensor.grad[:, :2], dim=-1)
         real_grad_norm = torch.nan_to_num(
             real_grad_norm, nan=0.0, posinf=0.0, neginf=0.0
         )
@@ -730,9 +783,19 @@ class GaussianModel:
         new_features_rest = self._features_rest[selected_pts_mask].repeat(N, 1, 1)
         new_opacities = self._opacity[selected_pts_mask].repeat(N, 1)
         new_tmp_radii = parent_tmp_radii.repeat(N)
-        new_gaussian_scene_num = self._gaussian_scene_num[
-            selected_pts_mask
-        ].repeat(N, 1)
+        new_gaussian_scene_num = self._gaussian_scene_num[selected_pts_mask].repeat(N, 1)
+
+        new_error_line_origin_history = self.error_line_origin_history[selected_pts_mask].repeat(N,1, 1)
+        new_error_line_dir_history = self.error_line_dir_history[selected_pts_mask].repeat(N, 1,1)
+        new_error_history_count = self.error_history_count[selected_pts_mask].repeat(N)
+        new_error_gradient_max = self.error_gradient_max[selected_pts_mask].repeat(N)
+
+        new_scale_error_line_origin_history = self.scale_error_line_origin_history[selected_pts_mask].repeat(N, 1,1)
+        new_scale_error_line_dir_history = self.scale_error_line_dir_history[selected_pts_mask].repeat(N, 1,1)
+
+        new_rotation_error_line_origin_history = self.rotation_error_line_origin_history[selected_pts_mask].repeat(N, 1,1)
+        new_rotation_error_line_dir_history = self.rotation_error_line_dir_history[selected_pts_mask].repeat(N, 1,1)
+
 
         self.densification_postfix(
             new_xyz,
@@ -743,6 +806,18 @@ class GaussianModel:
             new_rotation,
             new_tmp_radii,
             new_gaussian_scene_num,
+
+            new_error_line_origin_history,
+            new_error_line_dir_history ,
+            new_error_history_count ,
+            new_error_gradient_max ,
+
+            new_scale_error_line_origin_history ,
+            new_scale_error_line_dir_history ,
+
+            new_rotation_error_line_origin_history ,
+            new_rotation_error_line_dir_history, 
+            torch.where(selected_pts_mask)[0].repeat(N),
         )
 
         # Restore statistics for old points and inherit the parent's statistics

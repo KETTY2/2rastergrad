@@ -23,6 +23,7 @@ from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
+from viewspace_stats import dump_viewspace_stats
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -40,6 +41,13 @@ try:
     SPARSE_ADAM_AVAILABLE = True
 except:
     SPARSE_ADAM_AVAILABLE = False
+
+import re
+
+def _image_number(name):
+    """'0050.png' -> 50. 숫자가 없으면 None."""
+    nums = re.findall(r"\d+", os.path.splitext(os.path.basename(name))[0])
+    return int(nums[-1]) if nums else None
 
 def _camera_forward_world(camera):
     """Camera optical axis in world coordinates (camera looks along local +z)."""
@@ -93,9 +101,33 @@ def _two_view_line_update(current, grad1, grad2, direction1, direction2, min_tar
         & (grad2_norm > 1e-12)
         & (target_grad_norm > 1e-8)
     )
-    redirected = target_grad / target_grad_norm.clamp_min(1e-8)[:, None]
-    redirected = redirected * grad2_norm[:, None]
+#    redirected = target_grad / target_grad_norm.clamp_min(1e-8)[:, None]
+#    redirected = redirected * grad2_norm[:, None]
+    redirected = target_grad
     return target, redirected, usable, gap
+
+def _redirect_toward_line(
+    current, gradient, direction, line_origin, line_direction, compare_mask,
+):
+    """Redirect gradients toward a stored line for Gaussians in compare_mask.
+
+    Which Gaussians are updated/compared is decided by the caller (from the
+    xyz gradient), so xyz, scale and rotation always share the same masks.
+    """
+    gradient = gradient.detach()
+    redirected = gradient.clone()
+    new_origin = current.detach() - gradient
+
+    if compare_mask.any():
+        p_new, p_old, _, valid = _closest_line_points(
+            new_origin, direction, line_origin, line_direction
+        )
+        toward_old_line = current.detach() - p_new
+        usable = compare_mask & valid & torch.isfinite(toward_old_line).all(dim=-1)
+        redirected[usable] = toward_old_line[usable]
+
+    return redirected, new_origin
+
 
 def _quat_gradient_to_local_rotation_tangent(quaternion, grad_quaternion):
     """Map a quaternion gradient to a 3D local-axis infinitesimal-rotation gradient."""
@@ -164,6 +196,25 @@ def _csv_vec(tensor, index):
         return ["", "", ""]
     return [float(v) for v in tensor[index].detach().reshape(-1)[:3].cpu().tolist()]
 
+_ERROR_HISTORY_ATTRS = (
+    "error_line_origin_history",
+    "error_line_dir_history",
+    "error_history_count",
+    "error_gradient_max",
+    "scale_error_line_origin_history",
+    "scale_error_line_dir_history",
+    "rotation_error_line_origin_history",
+    "rotation_error_line_dir_history",
+)
+
+@torch.no_grad()
+def _zero_error_history(gaussians):
+    """Zero every per-Gaussian line/max-gradient buffer in place (shapes kept)."""
+    for name in _ERROR_HISTORY_ATTRS:
+        tensor = getattr(gaussians, name, None)
+        if tensor is not None:
+            tensor.zero_()
+
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
 
     if not SPARSE_ADAM_AVAILABLE and opt.optimizer_type == "sparse_adam":
@@ -198,7 +249,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     viewpoint_stack = scene.getTrainCameras().copy()
     num_cameras = len(viewpoint_stack)
     print(f"number of images: {num_cameras}")
-    checkpoint_iterations.append(num_cameras * 101)
     viewpoint_indices = list(range(len(viewpoint_stack)))
     ema_loss_for_log = 0.0
     ema_Ll1depth_for_log = 0.0
@@ -233,32 +283,32 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if iteration % 1000 == 0:
             gaussians.oneupSHdegree()
 
-        paired_mode = (## 30 at 5cyclesplit
-            iteration >= num_cameras * 500
+        is_fifth_cycle = ((iteration - 1) // num_cameras + 1) % 6
+
+        if (iteration - 1) % num_cameras == 0:
+            _zero_error_history(gaussians)
+
+        paired_mode = (
+            iteration >= num_cameras * 30
+            and iteration <= 27000
+            and is_fifth_cycle != 0
+            and is_fifth_cycle != 1
+            and is_fifth_cycle != 5
         )
-        if paired_mode:
-            viewpoint_cam0=viewpoint_cam
-            vind0=vind
-            # Pick a random Camera
-            if not viewpoint_stack:
-                viewpoint_stack = scene.getTrainCameras().copy()
-                viewpoint_indices = list(range(len(viewpoint_stack)))
-        
-            rand_idx = randint(0, len(viewpoint_indices) - 1)
-            viewpoint_cam = viewpoint_stack.pop(rand_idx)
-            vind = viewpoint_indices.pop(rand_idx)
-            camera_indices = [vind0, vind]
-            viewpoint_cams = [viewpoint_cam0,viewpoint_cam]
-        else: 
-            if not viewpoint_stack:
-                viewpoint_stack = scene.getTrainCameras().copy()
-                viewpoint_indices = list(range(len(viewpoint_stack)))
-        
-            rand_idx = randint(0, len(viewpoint_indices) - 1)
-            viewpoint_cam = viewpoint_stack.pop(rand_idx)
-            vind = viewpoint_indices.pop(rand_idx)
-            camera_indices = [vind]
-            viewpoint_cams = [viewpoint_cam]
+
+        if not viewpoint_stack:
+            # A complete pass over the training cameras has finished.
+            # Start the next pass without carrying maxima or lines forward.
+            if paired_mode:
+                gaussians.init_error_history()
+            viewpoint_stack = scene.getTrainCameras().copy()
+            viewpoint_indices = list(range(len(viewpoint_stack)))
+
+        rand_idx = randint(0, len(viewpoint_indices) - 1)
+        viewpoint_cam = viewpoint_stack.pop(rand_idx)
+        vind = viewpoint_indices.pop(rand_idx)
+        camera_indices = [vind]
+        viewpoint_cams = [viewpoint_cam]
         # Render
         if (iteration - 1) == debug_from:
             pipe.debug = True
@@ -270,7 +320,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         for cam_idx, cam in zip(camera_indices, viewpoint_cams):
             if paired_mode:
-                # Give each camera an independent output flag map, then union the flags.
                 gaussians._gaussian_scene_num = torch.zeros_like(gaussians._gaussian_scene_num)
             pkg = render(
                 cam, gaussians, pipe, bg,
@@ -290,206 +339,109 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         Ll1 = torch.stack([item[0] for item in view_losses]).mean()
         loss = torch.stack([item[1] for item in view_losses]).mean()
         Ll1depth = sum(item[2] for item in view_losses) / len(view_losses)
-        redirect_params = [
-            gaussians._xyz,
-            gaussians._scaling,
-            gaussians._rotation,
-            gaussians._opacity,
-            gaussians._features_dc,
-            gaussians._features_rest,
-        ]
-        
-        if paired_mode:
-            view_losses[0][1].backward(retain_graph=True)
-            grads1 = [
-                None if p.grad is None else p.grad.detach().clone()
-                for p in redirect_params
-            ]
+        view_losses[0][1].backward()
+        radii = render_pkgs[0]["radii"]
 
-            gaussians.optimizer.zero_grad(set_to_none=True)
-            gaussians.exposure_optimizer.zero_grad(set_to_none=True)
-
-            view_losses[1][1].backward()
-            grads2 = [
-                None if p.grad is None else p.grad.detach().clone()
-                for p in redirect_params
-            ]
-        else:
-            view_losses[0][1].backward()
-
-
-        if paired_mode:
-            # 
-            flag_union = render_pkgs[1]["gaussian_scene"].detach()
-            gaussians._gaussian_scene_num = flag_union
-            radii = render_pkgs[1]["radii"]
-        else:    
-            radii = render_pkgs[0]["radii"]
-
-
-        # num_cameras * 60
         if paired_mode:
             with torch.no_grad():
-                def grad_or_zero(grad, parameter):
-                    return grad.detach() if grad is not None else torch.zeros_like(parameter)
-
-                mean_grads = []
-                for parameter, grad1, grad2 in zip(
-                    redirect_params, grads1, grads2
-                ):
-                    if grad1 is None and grad2 is None:
-                        mean_grads.append(None)
-                    else:
-                        g1 = grad_or_zero(grad1, parameter)
-                        g2 = grad_or_zero(grad2, parameter)
-                        mean_grads.append( g2)
-
-                for parameter, mean_grad in zip(redirect_params, mean_grads):
-                    if mean_grad is None:
-                        parameter.grad = None
-                    elif parameter.grad is None:
-                        parameter.grad = mean_grad.clone()
-                    else:
-                        parameter.grad.copy_(mean_grad)
-
-                active = gaussians._gaussian_scene_num[:, 0] > 0.5
-                visible_both = (
-                    (render_pkgs[0]["radii"] > 0)
-                    & (render_pkgs[1]["radii"] > 0)
-                )
-                update_mask = active & visible_both
-
-                d1_world = camera_forwards[camera_indices[0]].to(
-                    device=gaussians._xyz.device,
-                    dtype=gaussians._xyz.dtype,
-                )
-                d2_world = camera_forwards[camera_indices[1]].to(
-                    device=gaussians._xyz.device,
-                    dtype=gaussians._xyz.dtype,
+                camera_direction = _camera_forward_world(viewpoint_cam).to(
+                    device=gaussians._xyz.device, dtype=gaussians._xyz.dtype
                 )
 
-                current_xyz = gaussians._xyz.detach()
-                xyz1 = grad_or_zero(grads1[0], gaussians._xyz)
-                xyz2 = grad_or_zero(grads2[0], gaussians._xyz)
-
-                xyz_target, xyz_redirected, xyz_valid, xyz_gap = (
-                    _two_view_line_update(
-                        current_xyz, xyz1, xyz2, d1_world, d2_world
+                # The xyz gradient alone decides which Gaussians record a new
+                # line this iteration. Both masks are computed once, BEFORE any
+                # history is written, and then shared by xyz, scale and rotation.
+                xyz_grad = gaussians._xyz.grad
+                if xyz_grad is not None:
+                    xyz_grad_norm = torch.linalg.vector_norm(xyz_grad.detach(), dim=-1)
+                    is_new_max = torch.isfinite(xyz_grad_norm) & (
+                        xyz_grad_norm > gaussians.error_gradient_max
                     )
-                )
-                xyz_usable = update_mask & xyz_valid
+                    compare = is_new_max & (gaussians.error_history_count > 0)
 
-                if gaussians._xyz.grad is not None and xyz_usable.any():
-                    gaussians._xyz.grad[xyz_usable] = \
-                        xyz_redirected[xyz_usable]
-
-                
-                current_scale = gaussians.get_scaling.detach()
-                scale_denominator = current_scale.clamp_min(1e-8)
-
-                ####
-                scale_log_grad1 = grad_or_zero(
-                    grads1[1], gaussians._scaling
-                )
-                scale_log_grad2 = grad_or_zero(
-                    grads2[1], gaussians._scaling
-                )
-                scale_grad1 = scale_log_grad1 / scale_denominator
-                scale_grad2 = scale_log_grad2 / scale_denominator
-
-                current_rotation = gaussians.get_rotation.detach()
-                rotation_matrices = build_rotation(current_rotation)
-
-                d1_local = _world_direction_to_gaussian_local(
-                    d1_world, rotation_matrices
-                )
-                d2_local = _world_direction_to_gaussian_local(
-                    d2_world, rotation_matrices
-                )
-
-                scale_target, scale_redirected_physical, scale_valid, scale_gap = (
-                    _two_view_line_update(
-                        current_scale,
-                        scale_grad1,
-                        scale_grad2,
-                        d1_local,
-                        d2_local,
-                        min_target=1e-6,
+                    # Position: xyz lives in world coordinates, so its line
+                    # follows the camera optical axis in world space.
+                    redirected, new_origin = _redirect_toward_line(
+                        gaussians._xyz.detach(), xyz_grad, camera_direction,
+                        gaussians.error_line_origin_history[:, 0],
+                        gaussians.error_line_dir_history[:, 0],
+                        compare,
                     )
-                )
-                scale_usable = update_mask & scale_valid
+                    xyz_grad.copy_(torch.where(is_new_max[:, None], redirected, xyz_grad))
+                    gaussians.error_gradient_max[is_new_max] = xyz_grad_norm[is_new_max]
+                    gaussians.error_line_origin_history[is_new_max, 0] = new_origin[is_new_max]
+                    gaussians.error_line_dir_history[is_new_max, 0] = camera_direction
 
-                if gaussians._scaling.grad is not None and scale_usable.any():
-                    scale_redirected_log = (
-                        scale_redirected_physical / scale_denominator
+                    # Shared by scale and rotation: camera axis in each
+                    # Gaussian's local frame.
+                    rotation_matrices = build_rotation(gaussians.get_rotation.detach())
+                    local_direction = _world_direction_to_gaussian_local(
+                        camera_direction, rotation_matrices
                     )
-                    gaussians._scaling.grad[scale_usable] = \
-                        scale_redirected_log[scale_usable]
 
-              ###
-                rotation_grad1 = grad_or_zero(
-                    grads1[2], gaussians._rotation
-                )
-                rotation_grad2 = grad_or_zero(
-                    grads2[2], gaussians._rotation
-                )
-
-                tangent1, tangent_jacobian = \
-                    _quat_gradient_to_local_rotation_tangent(
-                        current_rotation, rotation_grad1
-                    )
-                tangent2, _ = _quat_gradient_to_local_rotation_tangent(
-                    current_rotation, rotation_grad2
-                )
-
-                zero_tangent = torch.zeros_like(tangent1)
-                (
-                    rotation_target,
-                    rotation_tangent_redirected,
-                    rotation_valid,
-                    rotation_gap,
-                ) = _two_view_line_update(
-                    zero_tangent,
-                    tangent1,
-                    tangent2,
-                    d1_local,
-                    d2_local,
-                )
-                rotation_usable = update_mask & rotation_valid
-
-                if gaussians._rotation.grad is not None and rotation_usable.any():
-                    redirected_q_grad = \
-                        _local_rotation_tangent_gradient_to_quat(
-                            tangent_jacobian,
-                            rotation_tangent_redirected,
+                    # Scale: convert the log-scale gradient to physical scale
+                    # space, redirect with the xyz-decided masks, then map back
+                    # to the trainable log space.
+                    scale_grad_log = gaussians._scaling.grad
+                    if scale_grad_log is not None:
+                        scale = gaussians.get_scaling.detach().clamp_min(1e-8)
+                        scale_grad_physical = scale_grad_log.detach() / scale
+                        redirected, new_origin = _redirect_toward_line(
+                            scale, scale_grad_physical, local_direction,
+                            gaussians.scale_error_line_origin_history[:, 0],
+                            gaussians.scale_error_line_dir_history[:, 0],
+                            compare,
                         )
-                    gaussians._rotation.grad[rotation_usable] = \
-                        redirected_q_grad[rotation_usable]
+                        redirected_log = redirected * scale
+                        scale_grad_log.copy_(torch.where(
+                            is_new_max[:, None], redirected_log, scale_grad_log
+                        ))
+                        gaussians.scale_error_line_origin_history[is_new_max, 0] = new_origin[is_new_max]
+                        gaussians.scale_error_line_dir_history[is_new_max, 0] = local_direction[is_new_max]
 
-           
-                # Log the first flagged Gaussian in the current pair.
+                    # Rotation: use the three-dimensional local rotation
+                    # tangent, redirect with the xyz-decided masks, then lift
+                    # back to quaternion parameter space for the optimizer.
+                    rotation_grad_q = gaussians._rotation.grad
+                    if rotation_grad_q is not None:
+                        quaternion = gaussians.get_rotation.detach()
+                        tangent_grad, tangent_jacobian = \
+                            _quat_gradient_to_local_rotation_tangent(
+                                quaternion, rotation_grad_q.detach()
+                            )
+                        zero_tangent = torch.zeros_like(tangent_grad)
+                        redirected_tangent, new_origin = _redirect_toward_line(
+                            zero_tangent, tangent_grad, local_direction,
+                            gaussians.rotation_error_line_origin_history[:, 0],
+                            gaussians.rotation_error_line_dir_history[:, 0],
+                            compare,
+                        )
+                        redirected_q = _local_rotation_tangent_gradient_to_quat(
+                            tangent_jacobian, redirected_tangent
+                        )
+                        rotation_grad_q.copy_(torch.where(
+                            is_new_max[:, None], redirected_q, rotation_grad_q
+                        ))
+                        gaussians.rotation_error_line_origin_history[is_new_max, 0] = new_origin[is_new_max]
+                        gaussians.rotation_error_line_dir_history[is_new_max, 0] = local_direction[is_new_max]
+
+                    # Mark history as valid only after all three lines are stored.
+                    gaussians.error_history_count[is_new_max] = 1
+
+                active = (gaussians._gaussian_scene_num[:, 0] > 0.5) & (radii > 0)
                 ids = torch.where(active)[0]
                 debug_id = int(ids[0].item()) if ids.numel() else -1
-                debug_id_valid = debug_id >= 0
-                debug_flagged = int(debug_id_valid)
-                debug_xyz = _csv_vec(current_xyz, debug_id) if debug_id_valid else ["", "", ""]
-                debug_grad1 = _csv_vec(g1, debug_id) if debug_id_valid else ["", "", ""]
-                debug_grad2 = _csv_vec(g2, debug_id) if debug_id_valid else ["", "", ""]
-                
-                debug_status = "no_flagged_gaussian"
-                if debug_id_valid:
-                    debug_status = "not_usable_or_skipped"
-                    
+                debug_xyz = _csv_vec(gaussians._xyz.detach(), debug_id)
+                debug_grad = _csv_vec(gaussians._xyz.grad, debug_id)
+                debug_dir = _csv_vec(gaussians.error_line_dir_history[:, 0], debug_id)
+                debug_csv.writerow([
+                    iteration, debug_id, int(debug_id >= 0),
+                    int(gaussians.error_history_count[debug_id].item()) if debug_id >= 0 else 0,
+                    vind, *debug_xyz, *debug_grad, *debug_dir,
+                    "updated" if debug_id >= 0 else "no_visible_gaussian",
+                ])
+                debug_csv_file.flush()
 
-            debug_csv.writerow([
-                iteration, debug_id, debug_flagged, camera_indices[0], camera_indices[1],
-                *debug_xyz, *debug_grad1, *debug_grad2,
-                *(_csv_vec(gaussians._xyz.grad, debug_id) if debug_id_valid and gaussians._xyz.grad is not None else ["", "", ""]),
-                debug_status,
-            ])
-            debug_csv_file.flush()
-
-#############
         iter_end.record()
 
         with torch.no_grad():
@@ -529,8 +481,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     and iteration % opt.densification_interval == 0
                 )
 
-                camera_cycle = (iteration - 1) // num_cameras + 1
-                is_fifth_cycle = camera_cycle % 5 == 0
 
                 if do_densify:
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
@@ -541,7 +491,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                         size_threshold,
                         radii,
                     )
-                elif (iteration < opt.densify_until_iter and iteration > opt.densify_from_iter  and is_fifth_cycle):
+                elif (iteration < opt.densify_until_iter and iteration >= num_cameras * 30  and is_fifth_cycle==0):
                     gaussians.random_split_explore(
                         split_pkg["viewspace_abs"],
                         split_pkg["viewspace_points"],
@@ -552,7 +502,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
 
-
+            pass_idx = (iteration - 1) // num_cameras + 1
+            img_num = _image_number(viewpoint_cam.image_name)
+            if pass_idx == opt.stat_pass and img_num in opt.stat_img_nums:
+                tag = f"{iteration:06d}_pass{pass_idx}_img{img_num:04d}"
+                dump_viewspace_stats(
+                    render_pkgs[0], tag,
+                    os.path.join(dataset.model_path, "viewspace_stats"),
+                )
             # Optimizer step
             if iteration < opt.iterations:
                 gaussians.exposure_optimizer.step()
@@ -657,6 +614,8 @@ if __name__ == "__main__":
     parser.add_argument('--disable_viewer', action='store_true', default=False)
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
+    parser.add_argument("--stat_pass", type=int, default=150)
+    parser.add_argument("--stat_img_nums", nargs="+", type=int, default=[])
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     
@@ -664,6 +623,9 @@ if __name__ == "__main__":
 
     # Initialize system state (RNG)
     safe_state(args.quiet)
+
+    op.stat_pass = args.stat_pass
+    op.stat_img_nums = set(args.stat_img_nums)
 
     # Start GUI server, configure and run training
     if not args.disable_viewer:
