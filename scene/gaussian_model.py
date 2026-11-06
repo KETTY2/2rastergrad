@@ -46,7 +46,6 @@ class GaussianModel:
 
         self.rotation_activation = torch.nn.functional.normalize
 
-
     def __init__(self, sh_degree, optimizer_type="default"):
         self.active_sh_degree = 0
         self.optimizer_type = optimizer_type
@@ -69,6 +68,8 @@ class GaussianModel:
         self.optimizer = None
         self.percent_dense = 0
         self.spatial_lr_scale = 0
+        # ExploreGS: seed explore를 쓸 때 world-space big point prune 기준 (원본 3DGS = 0.1)
+        self.big_point_threshold = 0.1
         self.setup_functions()
 
     def capture(self):
@@ -109,10 +110,9 @@ class GaussianModel:
 
         self.optimizer.load_state_dict(opt_dict)
 
-        # Per-Gaussian buffers are not checkpointed; rebuild them so their
+        # Gaussian UIDs are not checkpointed; rebuild them so their
         # length matches the restored number of Gaussians.
         self.init_gaussian_uids()
-        self.init_error_history()
 
     @property
     def get_scaling(self):
@@ -182,7 +182,6 @@ class GaussianModel:
 
         opacities = self.inverse_opacity_activation(0.1 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
 
-
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))
         self._features_rest = nn.Parameter(features[:,:,1:].transpose(1, 2).contiguous().requires_grad_(True))
@@ -196,9 +195,6 @@ class GaussianModel:
         self.pretrained_exposures = None
         exposure = torch.eye(3, 4, device="cuda")[None].repeat(len(cam_infos), 1, 1)
         self._exposure = nn.Parameter(exposure.requires_grad_(True))
-
-        self.init_error_history()
-
 
     def training_setup(self, training_args):
         self.percent_dense = training_args.percent_dense
@@ -254,48 +250,6 @@ class GaussianModel:
         )
         self._gaussian_uid = torch.cat((self._gaussian_uid, new_ids))
         self._next_gaussian_uid += count
-
-    def init_error_history(self):
-        n = self._xyz.shape[0]
-        device = self._xyz.device
-
-        # The most recent world-space camera-space z-parallel line.
-        self.error_line_origin_history = torch.zeros(
-            (n, 1, 3), dtype=self._xyz.dtype, device=device
-        )
-        self.error_line_dir_history = torch.zeros(
-            (n, 1, 3), dtype=self._xyz.dtype, device=device
-        )
-       
-        self.error_history_count = torch.zeros(
-            n, dtype=torch.int32, device=device
-        )
-        self.error_gradient_max = torch.zeros(
-            n, dtype=self._xyz.dtype, device=device
-        )
-        
-        self.init_parameter_error_history()
-
-    def init_parameter_error_history(self):
-        n = self._xyz.shape[0]
-        device = self._xyz.device
-        dtype = self._xyz.dtype
-        self.scale_error_line_origin_history = torch.zeros(
-            (n, 1, 3), dtype=dtype, device=device
-        )
-        self.scale_error_line_dir_history = torch.zeros(
-            (n, 1, 3), dtype=dtype, device=device
-        )
-       
-        self.rotation_error_line_origin_history = torch.zeros(
-            (n, 1, 3), dtype=dtype, device=device
-        )
-        self.rotation_error_line_dir_history = torch.zeros(
-            (n, 1, 3), dtype=dtype, device=device
-        )
-        
-
-  
 
     def update_learning_rate(self, iteration):
         ''' Learning rate scheduling per step '''
@@ -402,8 +356,6 @@ class GaussianModel:
         self.active_sh_degree = self.max_sh_degree
 
         self.init_gaussian_uids()
-        self.init_error_history()
-
 
     def replace_tensor_to_optimizer(self, tensor, name):
         optimizable_tensors = {}
@@ -451,18 +403,6 @@ class GaussianModel:
 
         self._gaussian_scene_num =  self._gaussian_scene_num[valid_points_mask]
         self._gaussian_uid = self._gaussian_uid[valid_points_mask]
-        
-        self.error_line_origin_history = self.error_line_origin_history[valid_points_mask]
-        self.error_line_dir_history = self.error_line_dir_history[valid_points_mask]
-        self.error_history_count = self.error_history_count[valid_points_mask]
-        self.error_gradient_max = self.error_gradient_max[valid_points_mask]
-
-        self.scale_error_line_origin_history = self.scale_error_line_origin_history[valid_points_mask]
-        self.scale_error_line_dir_history = self.scale_error_line_dir_history[valid_points_mask]
-
-        self.rotation_error_line_origin_history = self.rotation_error_line_origin_history[valid_points_mask]
-        self.rotation_error_line_dir_history = self.rotation_error_line_dir_history[valid_points_mask]
-
 
         self.xyz_gradient_accum = self.xyz_gradient_accum[valid_points_mask]
 
@@ -492,16 +432,7 @@ class GaussianModel:
 
         return optimizable_tensors
 
-    def densification_postfix(self, new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_tmp_radii,new_gaussian_scene_num,new_error_line_origin_history,
-            new_error_line_dir_history ,
-            new_error_history_count ,
-            new_error_gradient_max ,
-
-            new_scale_error_line_origin_history ,
-            new_scale_error_line_dir_history ,
-
-            new_rotation_error_line_origin_history ,
-            new_rotation_error_line_dir_history,  parent_indices):
+    def densification_postfix(self, new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_tmp_radii, new_gaussian_scene_num):
         d = {"xyz": new_xyz,
         "f_dc": new_features_dc,
         "f_rest": new_features_rest,
@@ -518,17 +449,7 @@ class GaussianModel:
         self._rotation = optimizable_tensors["rotation"]
 
         self._gaussian_scene_num = torch.cat((self._gaussian_scene_num,new_gaussian_scene_num))
-        self.error_line_origin_history = torch.cat((self.error_line_origin_history,new_error_line_origin_history))
-        self.error_line_dir_history = torch.cat((self.error_line_dir_history,new_error_line_dir_history))
-        self.error_history_count = torch.cat((self.error_history_count,new_error_history_count))
-        self.error_gradient_max = torch.cat((self.error_gradient_max,new_error_gradient_max))
 
-        self.scale_error_line_origin_history = torch.cat((self.scale_error_line_origin_history, new_scale_error_line_origin_history))
-        self.scale_error_line_dir_history = torch.cat((self.scale_error_line_dir_history, new_scale_error_line_dir_history))
-
-        self.rotation_error_line_origin_history = torch.cat((self.rotation_error_line_origin_history, new_rotation_error_line_origin_history))
-        self.rotation_error_line_dir_history = torch.cat((self.rotation_error_line_dir_history, new_rotation_error_line_dir_history))
-        
         num_new = new_xyz.shape[0]
         device = self._xyz.device
         self.append_gaussian_uids(num_new)
@@ -588,18 +509,6 @@ class GaussianModel:
         # Current behavior: child Gaussians inherit the parent's flag
         new_gaussian_scene_num = self._gaussian_scene_num[selected_pts_mask].repeat(N, 1)
 
-        new_error_line_origin_history = self.error_line_origin_history[selected_pts_mask].repeat(N, 1,1)
-        new_error_line_dir_history = self.error_line_dir_history[selected_pts_mask].repeat(N, 1,1)
-        new_error_history_count = self.error_history_count[selected_pts_mask].repeat(N)
-        new_error_gradient_max = self.error_gradient_max[selected_pts_mask].repeat(N)
-
-        new_scale_error_line_origin_history = self.scale_error_line_origin_history[selected_pts_mask].repeat(N, 1, 1)
-        new_scale_error_line_dir_history = self.scale_error_line_dir_history[selected_pts_mask].repeat(N, 1,1)
-
-        new_rotation_error_line_origin_history = self.rotation_error_line_origin_history[selected_pts_mask].repeat(N, 1, 1)
-        new_rotation_error_line_dir_history = self.rotation_error_line_dir_history[selected_pts_mask].repeat(N, 1, 1)
-
-
         self.densification_postfix(
             new_xyz,
             new_features_dc,
@@ -609,17 +518,6 @@ class GaussianModel:
             new_rotation,
             new_tmp_radii,
             new_gaussian_scene_num,
-            new_error_line_origin_history,
-            new_error_line_dir_history ,
-            new_error_history_count ,
-            new_error_gradient_max ,
-
-            new_scale_error_line_origin_history ,
-            new_scale_error_line_dir_history ,
-
-            new_rotation_error_line_origin_history ,
-            new_rotation_error_line_dir_history, 
-            torch.where(selected_pts_mask)[0].repeat(N),
         )
 
         # Remove split parent Gaussians while keeping new child Gaussians
@@ -632,7 +530,6 @@ class GaussianModel:
     ),
         ))
         self.prune_points(prune_filter)
-
 
     def densify_and_clone(self, grads, grad_threshold, scene_extent):
         max_scale = self.get_scaling.max(dim=1).values
@@ -663,17 +560,6 @@ class GaussianModel:
 
         # Current behavior: clone copies inherit the parent's flag
         new_gaussian_scene_num = self._gaussian_scene_num[selected_pts_mask]
-        new_error_line_origin_history = self.error_line_origin_history[selected_pts_mask]
-        new_error_line_dir_history = self.error_line_dir_history[selected_pts_mask]
-        new_error_history_count = self.error_history_count[selected_pts_mask]
-        new_error_gradient_max = self.error_gradient_max[selected_pts_mask]
-
-        new_scale_error_line_origin_history = self.scale_error_line_origin_history[selected_pts_mask]
-        new_scale_error_line_dir_history = self.scale_error_line_dir_history[selected_pts_mask]
-
-        new_rotation_error_line_origin_history = self.rotation_error_line_origin_history[selected_pts_mask]
-        new_rotation_error_line_dir_history = self.rotation_error_line_dir_history[selected_pts_mask]
-
 
         self.densification_postfix(
             new_xyz,
@@ -684,17 +570,6 @@ class GaussianModel:
             new_rotation,
             new_tmp_radii,
             new_gaussian_scene_num,
-            new_error_line_origin_history,
-            new_error_line_dir_history ,
-            new_error_history_count ,
-            new_error_gradient_max ,
-
-            new_scale_error_line_origin_history ,
-            new_scale_error_line_dir_history ,
-
-            new_rotation_error_line_origin_history ,
-            new_rotation_error_line_dir_history, 
-            torch.where(selected_pts_mask)[0],
         )
 
     @torch.no_grad()
@@ -704,148 +579,157 @@ class GaussianModel:
         viewspace_point_tensor,
         max_grad,
         extent,
-        candidate_mask=None,
         N=2,
     ):
+        """
+        optimizer.step() 이후에 호출한다 (이번 렌더의 viewspace grad 사용).
+        |grad(abs)| >= 3*max_grad 이고 |grad(abs)| >= 3*|grad(points)| 이며
+        충분히 큰 Gaussian을 3DGS split 방식으로 N개로 쪼갠다.
+        반환: split된 부모 개수
+        """
         point_count = self._xyz.shape[0]
-
         if point_count == 0:
             return 0
         if N < 2:
             raise ValueError("N must be at least 2 for splitting")
 
         abs_grad = viewspace_abs_tensor.grad
-        if abs_grad is None:
+        pt_grad = viewspace_point_tensor.grad
+        if abs_grad is None or pt_grad is None:
             return 0
 
-        grad_norm = torch.norm(abs_grad[:, :2], dim=-1)
-        grad_norm = torch.nan_to_num(
-            grad_norm, nan=0.0, posinf=0.0, neginf=0.0
+        grad_norm = torch.nan_to_num(torch.norm(abs_grad[:, :2], dim=-1), nan=0.0, posinf=0.0, neginf=0.0)
+        real_grad_norm = torch.nan_to_num(torch.norm(pt_grad[:, :2], dim=-1), nan=0.0, posinf=0.0, neginf=0.0)
+
+        selected_pts_mask = (
+            (grad_norm >= max_grad * 3)
+            & (grad_norm >= real_grad_norm * 3)
+            & (self.get_scaling.max(dim=1).values > self.percent_dense * extent)
         )
-        real_grad_norm= torch.norm(viewspace_point_tensor.grad[:, :2], dim=-1)
-        real_grad_norm = torch.nan_to_num(
-            real_grad_norm, nan=0.0, posinf=0.0, neginf=0.0
-        )
-        selected_pts_mask = (grad_norm >= max_grad*3) & (grad_norm >= real_grad_norm*3)
-
-        if candidate_mask is not None:
-            candidate_mask = torch.as_tensor(
-                candidate_mask, device=self._xyz.device
-            ).reshape(-1).bool()
-
-            if candidate_mask.numel() != point_count:
-                raise ValueError(
-                    f"candidate_mask has {candidate_mask.numel()} entries, "
-                    f"but the model has {point_count} Gaussians"
-                )
-
-            selected_pts_mask &= candidate_mask
-
-        large_enough = (
-            self.get_scaling.max(dim=1).values > self.percent_dense * extent
-        )
-        selected_pts_mask &= large_enough
 
         split_count = int(selected_pts_mask.sum().item())
         if split_count == 0:
             return 0
 
-        print(f"Split:{split_count}")
-        # Keep existing densification statistics. densification_postfix resets
-        # them globally, which would otherwise break interval-based ADC when
-        # random splitting runs every iteration.
-        old_gradient_accum = self.xyz_gradient_accum.clone()
-        old_denom = self.denom.clone()
-        old_max_radii2D = self.max_radii2D.clone()
+        # densification_postfix가 통계를 전역 0으로 "새로 할당"하므로(제자리 수정 아님)
+        # clone 없이 참조만 잡아두면 된다.
+        old_gradient_accum = self.xyz_gradient_accum
+        old_denom = self.denom
+        old_max_radii2D = self.max_radii2D
 
-        if self.tmp_radii is None:
-            self.tmp_radii = torch.zeros(
-                point_count, dtype=self._xyz.dtype, device=self._xyz.device
-            )
-        parent_tmp_radii = self.tmp_radii[selected_pts_mask].clone()
+        # tmp_radii는 densify_and_prune 안에서만 의미가 있다.
+        # 여기서는 postfix/prune_points가 길이를 맞추는 데만 필요하므로 0으로 채운다.
+        self.tmp_radii = torch.zeros(point_count, dtype=self._xyz.dtype, device=self._xyz.device)
 
+        # 3DGS split: 부모 분포 N(mu, Sigma)에서 N개 샘플, scale은 1/(0.8N)
         selected_scaling = self.get_scaling[selected_pts_mask]
         stds = selected_scaling.repeat(N, 1)
         samples = torch.normal(mean=torch.zeros_like(stds), std=stds)
-        rotations = build_rotation(
-            self._rotation[selected_pts_mask]
-        ).repeat(N, 1, 1)
-        parent_xyz = self._xyz[selected_pts_mask].repeat(N, 1)
-        new_xyz = (
-            torch.bmm(rotations, samples.unsqueeze(-1)).squeeze(-1) + parent_xyz
-        )
-
-        new_scaling = self.scaling_inverse_activation(
-            selected_scaling.repeat(N, 1) / (0.8 * N)
-        )
-        new_rotation = self._rotation[selected_pts_mask].repeat(N, 1)
-        new_features_dc = self._features_dc[selected_pts_mask].repeat(N, 1, 1)
-        new_features_rest = self._features_rest[selected_pts_mask].repeat(N, 1, 1)
-        new_opacities = self._opacity[selected_pts_mask].repeat(N, 1)
-        new_tmp_radii = parent_tmp_radii.repeat(N)
-        new_gaussian_scene_num = self._gaussian_scene_num[selected_pts_mask].repeat(N, 1)
-
-        new_error_line_origin_history = self.error_line_origin_history[selected_pts_mask].repeat(N,1, 1)
-        new_error_line_dir_history = self.error_line_dir_history[selected_pts_mask].repeat(N, 1,1)
-        new_error_history_count = self.error_history_count[selected_pts_mask].repeat(N)
-        new_error_gradient_max = self.error_gradient_max[selected_pts_mask].repeat(N)
-
-        new_scale_error_line_origin_history = self.scale_error_line_origin_history[selected_pts_mask].repeat(N, 1,1)
-        new_scale_error_line_dir_history = self.scale_error_line_dir_history[selected_pts_mask].repeat(N, 1,1)
-
-        new_rotation_error_line_origin_history = self.rotation_error_line_origin_history[selected_pts_mask].repeat(N, 1,1)
-        new_rotation_error_line_dir_history = self.rotation_error_line_dir_history[selected_pts_mask].repeat(N, 1,1)
-
+        rotations = build_rotation(self._rotation[selected_pts_mask]).repeat(N, 1, 1)
+        new_xyz = torch.bmm(rotations, samples.unsqueeze(-1)).squeeze(-1) + self._xyz[selected_pts_mask].repeat(N, 1)
 
         self.densification_postfix(
             new_xyz,
-            new_features_dc,
-            new_features_rest,
-            new_opacities,
-            new_scaling,
-            new_rotation,
-            new_tmp_radii,
-            new_gaussian_scene_num,
-
-            new_error_line_origin_history,
-            new_error_line_dir_history ,
-            new_error_history_count ,
-            new_error_gradient_max ,
-
-            new_scale_error_line_origin_history ,
-            new_scale_error_line_dir_history ,
-
-            new_rotation_error_line_origin_history ,
-            new_rotation_error_line_dir_history, 
-            torch.where(selected_pts_mask)[0].repeat(N),
+            self._features_dc[selected_pts_mask].repeat(N, 1, 1),
+            self._features_rest[selected_pts_mask].repeat(N, 1, 1),
+            self._opacity[selected_pts_mask].repeat(N, 1),
+            self.scaling_inverse_activation(selected_scaling.repeat(N, 1) / (0.8 * N)),
+            self._rotation[selected_pts_mask].repeat(N, 1),
+            torch.zeros(N * split_count, dtype=self._xyz.dtype, device=self._xyz.device),
+            self._gaussian_scene_num[selected_pts_mask].repeat(N, 1),
         )
 
-        # Restore statistics for old points and inherit the parent's statistics
-        # for children before removing the selected parents.
-        self.xyz_gradient_accum = torch.cat(
-            (old_gradient_accum, old_gradient_accum[selected_pts_mask].repeat(N, 1)),
-            dim=0,
-        )
-        self.denom = torch.cat(
-            (old_denom, old_denom[selected_pts_mask].repeat(N, 1)), dim=0
-        )
-        self.max_radii2D = torch.cat(
-            (old_max_radii2D, old_max_radii2D[selected_pts_mask].repeat(N)),
-            dim=0,
-        )
+        # 기존 통계 복원 + 자식은 부모 통계 상속 (interval 기반 ADC 유지)
+        self.xyz_gradient_accum = torch.cat((old_gradient_accum, old_gradient_accum[selected_pts_mask].repeat(N, 1)), dim=0)
+        self.denom = torch.cat((old_denom, old_denom[selected_pts_mask].repeat(N, 1)), dim=0)
+        self.max_radii2D = torch.cat((old_max_radii2D, old_max_radii2D[selected_pts_mask].repeat(N)), dim=0)
 
-        prune_filter = torch.cat(
-            (
-                selected_pts_mask,
-                torch.zeros(
-                    N * split_count, dtype=torch.bool, device=self._xyz.device
-                ),
-            )
-        )
+        # 부모 제거
+        prune_filter = torch.cat((
+            selected_pts_mask,
+            torch.zeros(N * split_count, dtype=torch.bool, device=self._xyz.device),
+        ))
         self.prune_points(prune_filter)
         self.tmp_radii = None
 
         return split_count
+
+
+    # ------------------------------------------------------------------
+    # ExploreGS random seed (기존 Gaussian 재사용 버전)
+    # ------------------------------------------------------------------
+    def _new_seed_parameters(self, new_xyz, scale_factor=1.0, opacity_factor=0.5):
+        """ExploreGS new_gaussian_parameter (+ 랜덤 색). 거리는 월드 원점 기준."""
+        num_explore = new_xyz.shape[0]
+        device = new_xyz.device
+
+        new_features_dc = RGB2SH(torch.rand((num_explore,
+                                             self._features_dc.shape[1],
+                                             self._features_dc.shape[2]), device=device))
+        new_features_rest = torch.zeros((num_explore,
+                                         self._features_rest.shape[1],
+                                         self._features_rest.shape[2]), device=device)
+
+        new_xyz_norm = torch.norm(new_xyz, dim=1).unsqueeze(1)
+        G_xyz_norm = torch.norm(self._xyz.detach(), dim=1).unsqueeze(1)
+        scale_per_dist = torch.mean(self.get_scaling.detach() / G_xyz_norm)
+
+        new_scaling = torch.ones((num_explore, 3), device=device) * \
+            self.scaling_inverse_activation(scale_factor * scale_per_dist * new_xyz_norm)
+        new_opacities = torch.ones((num_explore, 1), device=device) * \
+            (new_xyz_norm / torch.max(new_xyz_norm)) * opacity_factor + 0.2
+        new_opacities = self.inverse_opacity_activation(new_opacities)
+        new_rotation = torch.randn((num_explore, 4), device=device)
+
+        return new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation
+
+    @torch.no_grad()
+    def seed_explore(self, num_explore=100, percentage_densify=None, seed_scene_num=1.0, **kwargs):
+        """
+        ExploreGS seed_explore 변형: 새 위치를 뽑아 Gaussian을 추가하는 대신,
+        기존 Gaussian 중 무작위 num_explore개를 골라 그 자리에서 seed 파라미터로 덮어쓴다.
+        - 위치(xyz): 그대로 유지 (= seed 위치로 사용)
+        - 색: 랜덤 RGB, 고차 SH = 0
+        - scale: 등방성, mean(s/|x|) * |x|           (ExploreGS와 동일, 월드 원점 기준)
+        - opacity: |x| / max(고른 것들의 |x|) * 0.5 + 0.2
+        - rotation: 랜덤
+        - 고른 Gaussian의 Adam 모멘트(xyz 제외)와 max_radii2D는 0으로 초기화
+        Gaussian 개수/순서는 바뀌지 않는다.
+        반환: 바뀐 개수
+        """
+        n = self._xyz.shape[0]
+        if num_explore is None:
+            if percentage_densify is None:
+                raise ValueError('Either num_explore or percentage_densify must be provided.')
+            num_explore = int(n * percentage_densify)
+        if num_explore <= 0 or n == 0:
+            return 0
+
+        device = self._xyz.device
+        idx = torch.randperm(n, device=device)[:min(int(num_explore), n)]
+        seed_xyz = self._xyz.detach()[idx]
+
+        f_dc, f_rest, opac, scal, rot = self._new_seed_parameters(seed_xyz)
+
+        self._features_dc.data[idx] = f_dc
+        self._features_rest.data[idx] = f_rest
+        self._opacity.data[idx] = opac
+        self._scaling.data[idx] = scal
+        self._rotation.data[idx] = rot
+
+        for param in (self._features_dc, self._features_rest, self._opacity,
+                      self._scaling, self._rotation):
+            state = self.optimizer.state.get(param, None)
+            if state is None:
+                continue
+            for key in ("exp_avg", "exp_avg_sq"):
+                if key in state and state[key].shape[0] == n:
+                    state[key][idx] = 0.0
+
+        # 크기가 바뀌었으니 이전 화면 크기 기록으로 prune되지 않게 초기화
+        self.max_radii2D[idx] = 0.0
+        self._gaussian_scene_num[idx] = float(seed_scene_num)
+        return int(idx.numel())
 
     def densify_and_prune(self, max_grad, min_opacity, extent, max_screen_size, radii):
         grads = self.xyz_gradient_accum / self.denom
@@ -858,7 +742,7 @@ class GaussianModel:
         prune_mask = (self.get_opacity < min_opacity).squeeze()
         if max_screen_size:
             big_points_vs = self.max_radii2D > max_screen_size
-            big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent
+            big_points_ws = self.get_scaling.max(dim=1).values > self.big_point_threshold * extent
             prune_mask = torch.logical_or(torch.logical_or(prune_mask, big_points_vs), big_points_ws)
         self.prune_points(prune_mask)
         tmp_radii = self.tmp_radii
