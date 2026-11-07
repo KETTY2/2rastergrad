@@ -15,6 +15,7 @@ from utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotati
 from torch import nn
 import os
 import json
+import copy
 from utils.system_utils import mkdir_p
 from plyfile import PlyData, PlyElement
 from utils.sh_utils import RGB2SH
@@ -656,10 +657,41 @@ class GaussianModel:
 
 
     # ------------------------------------------------------------------
-    # ExploreGS random seed (기존 Gaussian 재사용 버전)
+    # ExploreGS random seed
     # ------------------------------------------------------------------
+    @staticmethod
+    def _sampling_seed(mean_gaussians, factor=1.0, num_sample=80,
+                       seed_sampling_method="random_uniform", camera_extent=None,
+                       prune_near=False, max_extent_factor=200.0):
+        """ExploreGS sampling_seed: Gaussian 전체 bounding box 안에서 seed 위치를 뽑는다."""
+        max_extent = torch.max(mean_gaussians * factor, dim=0).values
+        min_extent = torch.min(mean_gaussians * factor, dim=0).values
+        if camera_extent is not None:
+            min_threshold = -torch.ones_like(min_extent) * max_extent_factor * float(camera_extent)
+            max_threshold = torch.ones_like(max_extent) * max_extent_factor * float(camera_extent)
+            min_extent = torch.max(min_extent, min_threshold)
+            max_extent = torch.min(max_extent, max_threshold)
+
+        extent = max_extent - min_extent
+        device = mean_gaussians.device
+        if seed_sampling_method == "random_uniform":
+            position_seed = (torch.rand(num_sample, 3, device=device) - 0.5) * extent \
+                + torch.mean(mean_gaussians, dim=0)
+        elif seed_sampling_method == "random_noise":
+            # 원본은 randperm(num_sample)로 앞쪽 num_sample개만 섞고, 조건식 우선순위 때문에
+            # camera_extent가 없으면 원점 근처 노이즈만 반환했다. 의도대로 고쳐서 구현.
+            idx = torch.randperm(mean_gaussians.shape[0], device=device)[:num_sample]
+            noise_scale = float(camera_extent) * 0.05 if camera_extent else 0.05
+            position_seed = copy.deepcopy(mean_gaussians[idx]) \
+                + torch.rand(idx.shape[0], 3, device=device) * noise_scale
+        else:
+            raise ValueError(f"Invalid sampling method: {seed_sampling_method}")
+        if prune_near and camera_extent:
+            position_seed = position_seed[torch.norm(position_seed, dim=1) > float(camera_extent)]
+        return position_seed
+
     def _new_seed_parameters(self, new_xyz, scale_factor=1.0, opacity_factor=0.5):
-        """ExploreGS new_gaussian_parameter (+ 랜덤 색). 거리는 월드 원점 기준."""
+        """ExploreGS new_gaussian_parameter (+ 랜덤 색)."""
         num_explore = new_xyz.shape[0]
         device = new_xyz.device
 
@@ -671,8 +703,8 @@ class GaussianModel:
                                          self._features_rest.shape[2]), device=device)
 
         new_xyz_norm = torch.norm(new_xyz, dim=1).unsqueeze(1)
-        G_xyz_norm = torch.norm(self._xyz.detach(), dim=1).unsqueeze(1)
-        scale_per_dist = torch.mean(self.get_scaling.detach() / G_xyz_norm)
+        G_xyz_norm = torch.norm(self._xyz, dim=1).unsqueeze(1)
+        scale_per_dist = torch.mean(self.get_scaling / G_xyz_norm)
 
         new_scaling = torch.ones((num_explore, 3), device=device) * \
             self.scaling_inverse_activation(scale_factor * scale_per_dist * new_xyz_norm)
@@ -684,52 +716,52 @@ class GaussianModel:
         return new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation
 
     @torch.no_grad()
-    def seed_explore(self, num_explore=100, percentage_densify=None, seed_scene_num=1.0, **kwargs):
+    def seed_explore(self, num_explore=100, camera_extents=None, extent_factor=1.0,
+                     seed_sampling_method="random_uniform", percentage_densify=None,
+                     seed_scene_num=1.0):
         """
-        ExploreGS seed_explore 변형: 새 위치를 뽑아 Gaussian을 추가하는 대신,
-        기존 Gaussian 중 무작위 num_explore개를 골라 그 자리에서 seed 파라미터로 덮어쓴다.
-        - 위치(xyz): 그대로 유지 (= seed 위치로 사용)
-        - 색: 랜덤 RGB, 고차 SH = 0
-        - scale: 등방성, mean(s/|x|) * |x|           (ExploreGS와 동일, 월드 원점 기준)
-        - opacity: |x| / max(고른 것들의 |x|) * 0.5 + 0.2
-        - rotation: 랜덤
-        - 고른 Gaussian의 Adam 모멘트(xyz 제외)와 max_radii2D는 0으로 초기화
-        Gaussian 개수/순서는 바뀌지 않는다.
-        반환: 바뀐 개수
+        ExploreGS seed_explore: 장면 bounding box 안에 랜덤 seed Gaussian을 num_explore개 추가.
+        - 기존 Gaussian의 ADC 통계(grad accum / denom / max_radii2D)는 보존, seed는 0으로 시작
+        - 개수/순서를 바꾸므로 viewspace grad를 쓰는 연산(random_split_explore 등) 이후에 호출할 것
+        반환: 추가된 개수
         """
-        n = self._xyz.shape[0]
         if num_explore is None:
             if percentage_densify is None:
                 raise ValueError('Either num_explore or percentage_densify must be provided.')
-            num_explore = int(n * percentage_densify)
-        if num_explore <= 0 or n == 0:
+            num_explore = int(self._opacity.shape[0] * percentage_densify)
+        if num_explore <= 0 or self._xyz.shape[0] == 0:
             return 0
 
-        device = self._xyz.device
-        idx = torch.randperm(n, device=device)[:min(int(num_explore), n)]
-        seed_xyz = self._xyz.detach()[idx]
+        new_xyz = self._sampling_seed(self._xyz.detach(), extent_factor, num_explore,
+                                      seed_sampling_method, camera_extents)
+        M = new_xyz.shape[0]
+        if M == 0:
+            return 0
 
-        f_dc, f_rest, opac, scal, rot = self._new_seed_parameters(seed_xyz)
+        f_dc, f_rest, opac, scal, rot = self._new_seed_parameters(new_xyz)
 
-        self._features_dc.data[idx] = f_dc
-        self._features_rest.data[idx] = f_rest
-        self._opacity.data[idx] = opac
-        self._scaling.data[idx] = scal
-        self._rotation.data[idx] = rot
+        # densification_postfix가 통계를 전역 0으로 새로 할당하므로 기존 값을 잡아둔다.
+        old_gradient_accum = self.xyz_gradient_accum
+        old_denom = self.denom
+        old_max_radii2D = self.max_radii2D
 
-        for param in (self._features_dc, self._features_rest, self._opacity,
-                      self._scaling, self._rotation):
-            state = self.optimizer.state.get(param, None)
-            if state is None:
-                continue
-            for key in ("exp_avg", "exp_avg_sq"):
-                if key in state and state[key].shape[0] == n:
-                    state[key][idx] = 0.0
+        point_count = self._xyz.shape[0]
+        self.tmp_radii = torch.zeros(point_count, dtype=self._xyz.dtype, device=self._xyz.device)
 
-        # 크기가 바뀌었으니 이전 화면 크기 기록으로 prune되지 않게 초기화
-        self.max_radii2D[idx] = 0.0
-        self._gaussian_scene_num[idx] = float(seed_scene_num)
-        return int(idx.numel())
+        new_scene_num = torch.full((M, 1), float(seed_scene_num),
+                                   dtype=self._gaussian_scene_num.dtype, device=self._xyz.device)
+        self.densification_postfix(
+            new_xyz, f_dc, f_rest, opac, scal, rot,
+            torch.zeros(M, dtype=self._xyz.dtype, device=self._xyz.device),
+            new_scene_num,
+        )
+
+        # 기존 통계 복원, seed는 0
+        self.xyz_gradient_accum = torch.cat((old_gradient_accum, torch.zeros((M, 1), device=old_gradient_accum.device)), dim=0)
+        self.denom = torch.cat((old_denom, torch.zeros((M, 1), device=old_denom.device)), dim=0)
+        self.max_radii2D = torch.cat((old_max_radii2D, torch.zeros(M, device=old_max_radii2D.device)), dim=0)
+        self.tmp_radii = None
+        return M
 
     def densify_and_prune(self, max_grad, min_opacity, extent, max_screen_size, radii):
         grads = self.xyz_gradient_accum / self.denom

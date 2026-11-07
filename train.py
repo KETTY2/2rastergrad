@@ -45,8 +45,8 @@ import re
 
 # ExploreGS random seed (ExploreGS config: seed)
 SEED_EXPLORE_ENABLED = True
-SEED_EXPLORE_NUM = 100           # 기존 Gaussian 중 seed로 재설정할 개수
-SEED_EXPLORE_INTERVAL = 100      # 몇 iteration마다 실행할지
+SEED_EXPLORE_NUM = 1000             # 한 번에 추가할 seed 개수
+SEED_EXPLORE_INTERVAL = 1000      # 몇 iteration마다 실행할지
 SEED_EXPLORE_UNTIL = 15000       # 이 iteration 전까지만 실행
 SEED_BIG_POINT_THRESHOLD = 10.0  # enabled일 때 world-space big point prune 기준 (원본 3DGS = 0.1)
 
@@ -220,14 +220,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
 
-            pass_idx = (iteration - 1) // num_cameras + 1
+            '''pass_idx = (iteration - 1) // num_cameras + 1
             img_num = _image_number(viewpoint_cam.image_name)
             if pass_idx == opt.stat_pass and img_num in opt.stat_img_nums:
                 tag = f"{iteration:06d}_pass{pass_idx}_img{img_num:04d}"
                 dump_viewspace_stats(
                     render_pkg, tag,
                     os.path.join(dataset.model_path, "viewspace_stats"),
-                )
+                )'''
             # Optimizer step
             if iteration < opt.iterations:
                 gaussians.exposure_optimizer.step()
@@ -254,14 +254,17 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                         extent=scene.cameras_extent,
                     )
 
-            # ExploreGS random seed (기존 Gaussian 재설정): 개수/순서를 바꾸지 않음
+            # ExploreGS random seed: viewspace grad를 쓰지 않으므로 random split 이후에 실행
             # (ExploreGS _check: densify_from_iter < iteration < until, iteration % interval == 0)
             if (SEED_EXPLORE_ENABLED
                     and opt.densify_from_iter < iteration < SEED_EXPLORE_UNTIL
                     and iteration % SEED_EXPLORE_INTERVAL == 0):
-                n_seed = gaussians.seed_explore(num_explore=SEED_EXPLORE_NUM)
+                n_seed = gaussians.seed_explore(
+                    num_explore=SEED_EXPLORE_NUM,
+                    camera_extents=scene.cameras_extent,
+                )
                 if n_seed > 0:
-                    tqdm.write(f"[ITER {iteration}] [Seed Explore] {n_seed} Gaussians re-seeded, total {gaussians.get_xyz.shape[0]}")
+                    tqdm.write(f"[ITER {iteration}] [Seed Explore] {n_seed} new Gaussians, total {gaussians.get_xyz.shape[0]}")
 
 
             # Save after densification and random splitting so the PLY includes
@@ -356,7 +359,7 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
     parser.add_argument("--stat_pass", type=int, default=150)
-    parser.add_argument("--stat_img_nums", nargs="+", type=int, default=[])
+    #parser.add_argument("--stat_img_nums", nargs="+", type=int, default=[])
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     
@@ -366,7 +369,7 @@ if __name__ == "__main__":
     safe_state(args.quiet)
 
     op.stat_pass = args.stat_pass
-    op.stat_img_nums = set(args.stat_img_nums)
+    #op.stat_img_nums = set(args.stat_img_nums)
 
     # Start GUI server, configure and run training
     if not args.disable_viewer:
