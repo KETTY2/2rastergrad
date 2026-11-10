@@ -144,7 +144,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if iteration % 1000 == 0:
             gaussians.oneupSHdegree()
 
-        is_fifth_cycle = ((iteration - 1) // num_cameras + 1) % 5
+        is_fifth_cycle = ((iteration - 1) // num_cameras + 1) % 15
 
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()

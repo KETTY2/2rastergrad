@@ -607,7 +607,7 @@ class GaussianModel:
 
         selected_pts_mask = (
             (grad_norm >= max_grad )
-            & (grad_norm >= real_grad_norm *10)
+            & (grad_norm >= real_grad_norm *4)
             & (self.get_scaling.max(dim=1).values > self.percent_dense * extent)
         )
 
@@ -631,7 +631,17 @@ class GaussianModel:
         samples = torch.normal(mean=torch.zeros_like(stds), std=stds)
         rotations = build_rotation(self._rotation[selected_pts_mask]).repeat(N, 1, 1)
         new_xyz = torch.bmm(rotations, samples.unsqueeze(-1)).squeeze(-1) + self._xyz[selected_pts_mask].repeat(N, 1)
+        
+        new_features_dc = RGB2SH(torch.rand((N,
+                                             self._features_dc.shape[1],
+                                             self._features_dc.shape[2]), device=self._xyz.device))
+        new_features_rest = torch.zeros((N,
+                                         self._features_rest.shape[1],
+                                         self._features_rest.shape[2]), device=self._xyz.device)
 
+        
+        new_opacities = self.get_opacity[selected_pts_mask] * 0.5 + 0.3
+        new_opacities = self.inverse_opacity_activation(new_opacities)
         self.densification_postfix(
             new_xyz,
             self._features_dc[selected_pts_mask].repeat(N, 1, 1),
