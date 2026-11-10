@@ -60,7 +60,9 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     means3D = pc.get_xyz
     means2D = screenspace_points
     opacity = pc.get_opacity
-    
+
+    gaussian_adam= torch.zeros_like(pc.get_opacity)
+    gaussian_maxT= torch.zeros_like(pc.get_opacity)
     gaussian_scene= torch.zeros_like(pc.get_opacity)
     high_error_pixels = torch.zeros(
     (viewpoint_camera.image_height, viewpoint_camera.image_width),
@@ -102,6 +104,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
     if separate_sh:
         rendered_image, radii, depth_image = rasterizer(
+            gaussian_adam=gaussian_adam,
+            gaussian_maxT=gaussian_maxT,
             abs2D=screenspace_abs,
             gaussian_scene = gaussian_scene,
             high_error_pixels=high_error_pixels,
@@ -116,6 +120,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             cov3D_precomp = cov3D_precomp)
     else:
         rendered_image, radii, depth_image = rasterizer(
+            gaussian_adam=gaussian_adam,
+            gaussian_maxT=gaussian_maxT,
             abs2D=screenspace_abs,
             gaussian_scene = gaussian_scene,
             high_error_pixels=high_error_pixels,
@@ -140,6 +146,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
 
     rendered_image = rendered_image.clamp(0, 1)
     out = {
+        "gaussian_adam" :gaussian_adam,
+        "gaussian_maxT" :gaussian_maxT,
         "render": rendered_image,
         "viewspace_points": screenspace_points,
         "viewspace_abs": screenspace_abs,

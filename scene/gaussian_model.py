@@ -22,6 +22,7 @@ from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
+import torch.nn.functional as F
 
 try:
     from diff_gaussian_rasterization import SparseGaussianAdam
@@ -216,10 +217,12 @@ class GaussianModel:
         elif self.optimizer_type == "sparse_adam":
             try:
                 self.optimizer = SparseGaussianAdam(l, lr=0.0, eps=1e-15)
+                print("SparseGaussianAdam ")
             except:
                 # A special version of the rasterizer is required to enable sparse adam
+                print("SparseGaussianAdam 사용 불가, 일반 Adam으로 대체")
                 self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
-
+        print(f"Optimizer: {type(self.optimizer).__name__}")
         self.exposure_optimizer = torch.optim.Adam([self._exposure])
 
         self.xyz_scheduler_args = get_expon_lr_func(lr_init=training_args.position_lr_init*self.spatial_lr_scale,
@@ -603,8 +606,8 @@ class GaussianModel:
         real_grad_norm = torch.nan_to_num(torch.norm(pt_grad[:, :2], dim=-1), nan=0.0, posinf=0.0, neginf=0.0)
 
         selected_pts_mask = (
-            (grad_norm >= max_grad * 3)
-            & (grad_norm >= real_grad_norm * 3)
+            (grad_norm >= max_grad )
+            & (grad_norm >= real_grad_norm *10)
             & (self.get_scaling.max(dim=1).values > self.percent_dense * extent)
         )
 

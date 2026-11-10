@@ -37,9 +37,10 @@ except:
 
 try:
     from diff_gaussian_rasterization import SparseGaussianAdam
-    SPARSE_ADAM_AVAILABLE = True
+    SPARSE_ADAM_Real = True
 except:
-    SPARSE_ADAM_AVAILABLE = False
+    SPARSE_ADAM_Real = False
+SPARSE_ADAM_AVAILABLE=False
 
 import re
 
@@ -85,7 +86,7 @@ def _view_loss(render_pkg, camera, opt, depth_l1_weight, iteration, dataset):
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
 
-    if not SPARSE_ADAM_AVAILABLE and opt.optimizer_type == "sparse_adam":
+    if not SPARSE_ADAM_Real and opt.optimizer_type == "sparse_adam":
         sys.exit(f"Trying to use sparse adam but it is not installed, please install the correct rasterizer using pip install [3dgs_accel].")
 
     first_iter = 0
@@ -105,7 +106,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
 
-    use_sparse_adam = opt.optimizer_type == "sparse_adam" and SPARSE_ADAM_AVAILABLE 
+    use_sparse_adam = opt.optimizer_type == "sparse_adam" and SPARSE_ADAM_Real 
     depth_l1_weight = get_expon_lr_func(opt.depth_l1_weight_init, opt.depth_l1_weight_final, max_steps=opt.iterations)
 
     viewpoint_stack = scene.getTrainCameras().copy()
@@ -127,7 +128,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 net_image_bytes = None
                 custom_cam, do_training, pipe.convert_SHs_python, pipe.compute_cov3D_python, keep_alive, scaling_modifer = network_gui.receive()
                 if custom_cam != None:
-                    net_image = render(custom_cam, gaussians, pipe, background, scaling_modifier=scaling_modifer, use_trained_exp=dataset.train_test_exp, separate_sh=SPARSE_ADAM_AVAILABLE)["render"]
+                    net_image = render(custom_cam, gaussians, pipe, background, scaling_modifier=scaling_modifer, use_trained_exp=dataset.train_test_exp, separate_sh=False)["render"]
                     net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
                 network_gui.send(net_image_bytes, dataset.source_path)
                 if do_training and ((iteration < int(opt.iterations)) or not keep_alive):
@@ -162,7 +163,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         render_pkg = render(
             viewpoint_cam, gaussians, pipe, bg,
             use_trained_exp=dataset.train_test_exp,
-            separate_sh=SPARSE_ADAM_AVAILABLE,
+            separate_sh=False,
             num_count=False,
         )
         image, gt_image, Ll1, loss, Ll1depth = _view_loss(
@@ -174,8 +175,18 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         loss.backward()
         radii = render_pkg["radii"]
-
+        gaussian_adam = render_pkg["gaussian_adam"]
         iter_end.record()
+
+        num_visible_radii = (radii > 0).sum().item()
+        num_contributed_adam = (gaussian_adam > 0).sum().item()
+        diff_count = num_visible_radii - num_contributed_adam
+
+        # 매 iteration 또는 주기적으로 확인 (예: 100 iteration마다 출력)
+        if iteration % 10 == 0:
+            tqdm.write(
+                f"Diff: {diff_count}"
+            )
 
         with torch.no_grad():
             # Progress bar
@@ -233,8 +244,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 gaussians.exposure_optimizer.step()
                 gaussians.exposure_optimizer.zero_grad(set_to_none = True)
                 if use_sparse_adam:
-                    visible = radii > 0
-                    gaussians.optimizer.step(visible, radii.shape[0])
+                    visible = gaussian_adam > 0
+                    gaussians.optimizer.step(visible, gaussian_adam.shape[0])
                     gaussians.optimizer.zero_grad(set_to_none = True)
                 else:
                     gaussians.optimizer.step()
@@ -253,12 +264,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                         max_grad=opt.densify_grad_threshold,
                         extent=scene.cameras_extent,
                     )
-
             # ExploreGS random seed: viewspace grad를 쓰지 않으므로 random split 이후에 실행
             # (ExploreGS _check: densify_from_iter < iteration < until, iteration % interval == 0)
             if (SEED_EXPLORE_ENABLED
                     and opt.densify_from_iter < iteration < SEED_EXPLORE_UNTIL
-                    and iteration % SEED_EXPLORE_INTERVAL == 0):
+                    and iteration%SEED_EXPLORE_INTERVAL==0):
                 n_seed = gaussians.seed_explore(
                     num_explore=SEED_EXPLORE_NUM,
                     camera_extents=scene.cameras_extent,
@@ -266,7 +276,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 if n_seed > 0:
                     tqdm.write(f"[ITER {iteration}] [Seed Explore] {n_seed} new Gaussians, total {gaussians.get_xyz.shape[0]}")
 
-
+            
             # Save after densification and random splitting so the PLY includes
             # the Gaussians created during this iteration.
             if iteration in saving_iterations:
