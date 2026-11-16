@@ -73,6 +73,8 @@ class GaussianModel:
         # ExploreGS: seed explore를 쓸 때 world-space big point prune 기준 (원본 3DGS = 0.1)
         self.big_point_threshold = 0.1
         self.setup_functions()
+        self._explore_split_count = torch.empty(0, dtype=torch.int32)
+        self.max_explore_split = 20
 
     def capture(self):
         return (
@@ -202,7 +204,7 @@ class GaussianModel:
         self.percent_dense = training_args.percent_dense
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
-
+        self._explore_split_count = torch.zeros(self.get_xyz.shape[0], dtype=torch.int32, device="cuda")
         l = [
             {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
             {'params': [self._features_dc], 'lr': training_args.feature_lr, "name": "f_dc"},
@@ -254,6 +256,11 @@ class GaussianModel:
         )
         self._gaussian_uid = torch.cat((self._gaussian_uid, new_ids))
         self._next_gaussian_uid += count
+
+    def reset_explore_split_count(self):
+        self._explore_split_count = torch.zeros(
+            self._xyz.shape[0], dtype=torch.int32, device=self._xyz.device
+        )
 
     def update_learning_rate(self, iteration):
         ''' Learning rate scheduling per step '''
@@ -407,7 +414,7 @@ class GaussianModel:
 
         self._gaussian_scene_num =  self._gaussian_scene_num[valid_points_mask]
         self._gaussian_uid = self._gaussian_uid[valid_points_mask]
-
+        self._explore_split_count = self._explore_split_count[valid_points_mask]
         self.xyz_gradient_accum = self.xyz_gradient_accum[valid_points_mask]
 
         self.denom = self.denom[valid_points_mask]
@@ -436,7 +443,7 @@ class GaussianModel:
 
         return optimizable_tensors
 
-    def densification_postfix(self, new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_tmp_radii, new_gaussian_scene_num):
+    def densification_postfix(self, new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_tmp_radii, new_gaussian_scene_num,new_explore_split_count=None):
         d = {"xyz": new_xyz,
         "f_dc": new_features_dc,
         "f_rest": new_features_rest,
@@ -461,6 +468,12 @@ class GaussianModel:
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+        if new_explore_split_count is None:
+            new_explore_split_count = torch.zeros(num_new, dtype=torch.int32, device=device)
+        
+        self._explore_split_count = torch.cat(
+            (self._explore_split_count, new_explore_split_count.to(torch.int32))
+        )
 
     def densify_and_split(self, grads, grad_threshold, scene_extent, N=2):
         n_points = self.get_xyz.shape[0]
@@ -522,6 +535,7 @@ class GaussianModel:
             new_rotation,
             new_tmp_radii,
             new_gaussian_scene_num,
+            self._explore_split_count[selected_pts_mask].repeat(N),
         )
 
         # Remove split parent Gaussians while keeping new child Gaussians
@@ -574,6 +588,7 @@ class GaussianModel:
             new_rotation,
             new_tmp_radii,
             new_gaussian_scene_num,
+            self._explore_split_count[selected_pts_mask],
         )
 
     @torch.no_grad()
@@ -583,90 +598,105 @@ class GaussianModel:
         viewspace_point_tensor,
         max_grad,
         extent,
-        N=2,
     ):
         """
         optimizer.step() 이후에 호출한다 (이번 렌더의 viewspace grad 사용).
-        |grad(abs)| >= 3*max_grad 이고 |grad(abs)| >= 3*|grad(points)| 이며
-        충분히 큰 Gaussian을 3DGS split 방식으로 N개로 쪼갠다.
+ 
+        두 기준이 각각 허용하는 자식 수 중 작은 쪽으로 split:
+            |g_abs| / max_grad   :  4배 -> 2,  16배 -> 4,  64배 -> 8   (얼마나 찢고 싶은가)
+            |g_abs| / |g_pts|    :  2배 -> 2,   4배 -> 4,   8배 -> 8   (얼마나 찢어도 되는가)
+            N = min(위 둘),  둘 중 하나라도 2 미만이면 split 안 함
+            예) max_grad 70배(8 원함) & g_pts 대비 5배(4까지 허용) -> 4개
+        (+ 크기 조건: max scale > percent_dense * extent)
+ 
+        자식 생성: 기존 3DGS split
+            위치  = 부모 분포 N(mu, Sigma)에서 N개 샘플
+            scale = 부모 scale / (1.6 * N / 2)
+            rotation / 색 / opacity / flag 는 부모 상속, 부모는 제거.
         반환: split된 부모 개수
         """
         point_count = self._xyz.shape[0]
         if point_count == 0:
             return 0
-        if N < 2:
-            raise ValueError("N must be at least 2 for splitting")
-
+ 
         abs_grad = viewspace_abs_tensor.grad
         pt_grad = viewspace_point_tensor.grad
         if abs_grad is None or pt_grad is None:
             return 0
-
+ 
         grad_norm = torch.nan_to_num(torch.norm(abs_grad[:, :2], dim=-1), nan=0.0, posinf=0.0, neginf=0.0)
         real_grad_norm = torch.nan_to_num(torch.norm(pt_grad[:, :2], dim=-1), nan=0.0, posinf=0.0, neginf=0.0)
-
+ 
+        # 기준별 "2의 몇 제곱 개까지" (k=1,2,3 -> 2,4,8개)
+        r_max = grad_norm / max_grad                                            # max_grad 대비 배율
+        r_pts = grad_norm / real_grad_norm.clamp_min(1e-12)                     # |g_pts| 대비 배율
+        k_max = torch.floor(torch.log2(r_max.clamp_min(1e-12))/10 +1)           # log4: 4->1, 8->2, 16->3 ,32,64
+        k_pts = torch.floor(torch.log2(r_pts.clamp_min(1e-12)))+1                 # 1이상이면
+        k_all = k_max                   # 둘 중 작은 쪽, 최대 8개
+ 
         selected_pts_mask = (
-            (grad_norm >= max_grad )
-            & (grad_norm >= real_grad_norm *4)
+            (k_all >= 1)
+            &(r_pts>=1)
+            & (self._explore_split_count < self.max_explore_split) 
             & (self.get_scaling.max(dim=1).values > self.percent_dense * extent)
         )
-
-        split_count = int(selected_pts_mask.sum().item())
+        sel_idx = selected_pts_mask.nonzero(as_tuple=True)[0]
+        split_count = int(sel_idx.numel())
         if split_count == 0:
             return 0
-
-        # densification_postfix가 통계를 전역 0으로 "새로 할당"하므로(제자리 수정 아님)
-        # clone 없이 참조만 잡아두면 된다.
+ 
+        device = self._xyz.device
+        dtype = self._xyz.dtype
+ 
+        # ---- 부모별 자식 수 (2, 4, 8)
+        n_child = torch.pow(2, k_all[sel_idx].long())                           # (M,)
+ 
+        # ---- 자식별 부모 인덱스 (부모마다 n_child개씩 연속)
+        parent_all = sel_idx.repeat_interleave(n_child)                         # (C,)
+        n_per_child = n_child.repeat_interleave(n_child).to(dtype)              # (C,) 각 자식의 N
+        num_children = int(parent_all.numel())
+ 
+        # ---- 3DGS split
+        stds = self.get_scaling[parent_all]                                     # (C,3)
+        samples = torch.normal(mean=torch.zeros_like(stds), std=stds)
+        rots = build_rotation(self._rotation[parent_all])                       # (C,3,3)
+        new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self._xyz[parent_all]
+        new_scale = stds / (1.6 * n_per_child / 2.0)[:, None]
+ 
+        # densification_postfix가 통계를 전역 0으로 "새로 할당"하므로 참조만 잡아둔다.
         old_gradient_accum = self.xyz_gradient_accum
         old_denom = self.denom
         old_max_radii2D = self.max_radii2D
-
-        # tmp_radii는 densify_and_prune 안에서만 의미가 있다.
-        # 여기서는 postfix/prune_points가 길이를 맞추는 데만 필요하므로 0으로 채운다.
-        self.tmp_radii = torch.zeros(point_count, dtype=self._xyz.dtype, device=self._xyz.device)
-
-        # 3DGS split: 부모 분포 N(mu, Sigma)에서 N개 샘플, scale은 1/(0.8N)
-        selected_scaling = self.get_scaling[selected_pts_mask]
-        stds = selected_scaling.repeat(N, 1)
-        samples = torch.normal(mean=torch.zeros_like(stds), std=stds)
-        rotations = build_rotation(self._rotation[selected_pts_mask]).repeat(N, 1, 1)
-        new_xyz = torch.bmm(rotations, samples.unsqueeze(-1)).squeeze(-1) + self._xyz[selected_pts_mask].repeat(N, 1)
-        
-        new_features_dc = RGB2SH(torch.rand((N,
-                                             self._features_dc.shape[1],
-                                             self._features_dc.shape[2]), device=self._xyz.device))
-        new_features_rest = torch.zeros((N,
-                                         self._features_rest.shape[1],
-                                         self._features_rest.shape[2]), device=self._xyz.device)
-
-        
-        new_opacities = self.get_opacity[selected_pts_mask] * 0.5 + 0.3
-        new_opacities = self.inverse_opacity_activation(new_opacities)
+        self.tmp_radii = torch.zeros(point_count, dtype=dtype, device=device)
+ 
         self.densification_postfix(
             new_xyz,
-            self._features_dc[selected_pts_mask].repeat(N, 1, 1),
-            self._features_rest[selected_pts_mask].repeat(N, 1, 1),
-            self._opacity[selected_pts_mask].repeat(N, 1),
-            self.scaling_inverse_activation(selected_scaling.repeat(N, 1) / (0.8 * N)),
-            self._rotation[selected_pts_mask].repeat(N, 1),
-            torch.zeros(N * split_count, dtype=self._xyz.dtype, device=self._xyz.device),
-            self._gaussian_scene_num[selected_pts_mask].repeat(N, 1),
+            self._features_dc[parent_all],
+            self._features_rest[parent_all],
+            self._opacity[parent_all],
+            self.scaling_inverse_activation(new_scale),
+            self._rotation[parent_all],
+            torch.zeros(num_children, dtype=dtype, device=device),
+            self._gaussian_scene_num[parent_all],
+            self._explore_split_count[parent_all] + 1,
         )
-
-        # 기존 통계 복원 + 자식은 부모 통계 상속 (interval 기반 ADC 유지)
-        self.xyz_gradient_accum = torch.cat((old_gradient_accum, old_gradient_accum[selected_pts_mask].repeat(N, 1)), dim=0)
-        self.denom = torch.cat((old_denom, old_denom[selected_pts_mask].repeat(N, 1)), dim=0)
-        self.max_radii2D = torch.cat((old_max_radii2D, old_max_radii2D[selected_pts_mask].repeat(N)), dim=0)
-
+ 
+        # 기존 통계 복원 + 자식은 부모 통계 상속
+        self.xyz_gradient_accum = torch.cat((old_gradient_accum, old_gradient_accum[parent_all]), dim=0)
+        self.denom = torch.cat((old_denom, old_denom[parent_all]), dim=0)
+        self.max_radii2D = torch.cat((old_max_radii2D, old_max_radii2D[parent_all]), dim=0)
+ 
         # 부모 제거
         prune_filter = torch.cat((
             selected_pts_mask,
-            torch.zeros(N * split_count, dtype=torch.bool, device=self._xyz.device),
+            torch.zeros(num_children, dtype=torch.bool, device=device),
         ))
         self.prune_points(prune_filter)
         self.tmp_radii = None
-
+ 
+        self.last_split_children = num_children
         return split_count
+
 
 
     # ------------------------------------------------------------------

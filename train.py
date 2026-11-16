@@ -22,7 +22,6 @@ from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
-from viewspace_stats import dump_viewspace_stats
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -42,19 +41,12 @@ except:
     SPARSE_ADAM_Real = False
 SPARSE_ADAM_AVAILABLE=False
 
-import re
-
 # ExploreGS random seed (ExploreGS config: seed)
 SEED_EXPLORE_ENABLED = True
 SEED_EXPLORE_NUM = 1000             # 한 번에 추가할 seed 개수
 SEED_EXPLORE_INTERVAL = 1000      # 몇 iteration마다 실행할지
 SEED_EXPLORE_UNTIL = 15000       # 이 iteration 전까지만 실행
 SEED_BIG_POINT_THRESHOLD = 10.0  # enabled일 때 world-space big point prune 기준 (원본 3DGS = 0.1)
-
-def _image_number(name):
-    """'0050.png' -> 50. 숫자가 없으면 None."""
-    nums = re.findall(r"\d+", os.path.splitext(os.path.basename(name))[0])
-    return int(nums[-1]) if nums else None
 
 def _camera_forward_world(camera):
     """Camera optical axis in world coordinates (camera looks along local +z)."""
@@ -144,7 +136,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if iteration % 1000 == 0:
             gaussians.oneupSHdegree()
 
-        is_fifth_cycle = ((iteration - 1) // num_cameras + 1) % 15
+        is_fifth_cycle = ((iteration - 1) // num_cameras + 1) % 5
 
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()
@@ -231,14 +223,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
 
-            '''pass_idx = (iteration - 1) // num_cameras + 1
-            img_num = _image_number(viewpoint_cam.image_name)
-            if pass_idx == opt.stat_pass and img_num in opt.stat_img_nums:
-                tag = f"{iteration:06d}_pass{pass_idx}_img{img_num:04d}"
-                dump_viewspace_stats(
-                    render_pkg, tag,
-                    os.path.join(dataset.model_path, "viewspace_stats"),
-                )'''
             # Optimizer step
             if iteration < opt.iterations:
                 gaussians.exposure_optimizer.step()
@@ -368,8 +352,6 @@ if __name__ == "__main__":
     parser.add_argument('--disable_viewer', action='store_true', default=False)
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
-    parser.add_argument("--stat_pass", type=int, default=150)
-    #parser.add_argument("--stat_img_nums", nargs="+", type=int, default=[])
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     
@@ -377,9 +359,6 @@ if __name__ == "__main__":
 
     # Initialize system state (RNG)
     safe_state(args.quiet)
-
-    op.stat_pass = args.stat_pass
-    #op.stat_img_nums = set(args.stat_img_nums)
 
     # Start GUI server, configure and run training
     if not args.disable_viewer:
