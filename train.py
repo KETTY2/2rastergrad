@@ -101,9 +101,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     use_sparse_adam = opt.optimizer_type == "sparse_adam" and SPARSE_ADAM_Real 
     depth_l1_weight = get_expon_lr_func(opt.depth_l1_weight_init, opt.depth_l1_weight_final, max_steps=opt.iterations)
 
-    viewpoint_stack = scene.getTrainCameras().copy()
-    num_cameras = len(viewpoint_stack)
-    print(f"number of images: {num_cameras}")
+
     viewpoint_indices = list(range(len(viewpoint_stack)))
     ema_loss_for_log = 0.0
     ema_Ll1depth_for_log = 0.0
@@ -238,7 +236,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             # Exploration: optimizer.step() 이후, 서로 독립적으로 실행
             # viewspace grad는 이번 렌더 시점의 Gaussian 순서 기준이므로,
             # 이번 iteration에 densify가 돌았으면(개수/순서 변경) 건너뛴다.
-            if iteration < opt.densify_until_iter and iteration > 10000 and not densified:
+            if iteration < opt.densify_until_iter and iteration > 30000 and not densified:
 
                 # random split: 이번 렌더의 viewspace grad 사용
                 if is_fifth_cycle == 0:
