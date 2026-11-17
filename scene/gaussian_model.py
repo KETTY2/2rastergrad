@@ -630,9 +630,8 @@ class GaussianModel:
         # 기준별 "2의 몇 제곱 개까지" (k=1,2,3 -> 2,4,8개)
         r_max = grad_norm / max_grad                                            # max_grad 대비 배율
         r_pts = grad_norm / real_grad_norm.clamp_min(1e-12)                     # |g_pts| 대비 배율
-        k_max = torch.floor(torch.log2(r_max.clamp_min(1e-12))/10 +1)           # log4: 4->1, 8->2, 16->3 ,32,64
-        k_pts = torch.floor(torch.log2(r_pts.clamp_min(1e-12)))+1                 # 1이상이면
-        k_all = k_max                   # 둘 중 작은 쪽, 최대 8개
+        k_max = torch.floor(torch.log2(r_max.clamp_min(1e-12)) / 10 + 1)        # 1~1023배->1, 1024배 이상->2
+        k_all = torch.where(r_pts >= 10, k_max, torch.zeros_like(k_max))        # |g_pts| 대비 10배 이상일 때만 split
  
         selected_pts_mask = (
             (k_all >= 1)

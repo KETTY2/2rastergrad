@@ -10,6 +10,7 @@
 #
 
 import torch
+import inspect
 from scene import Scene
 import os
 from tqdm import tqdm
@@ -22,11 +23,9 @@ from utils.loss_utils import ssim
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, get_combined_args
 from gaussian_renderer import GaussianModel
-try:
-    from diff_gaussian_rasterization import SparseGaussianAdam
-    SPARSE_ADAM_AVAILABLE = True
-except:
-    SPARSE_ADAM_AVAILABLE = False
+# train.py와 동일하게 SH를 dc/rest로 나누지 않고 넘긴다.
+# (수정된 rasterizer의 forward()는 'dc' 인자를 받지 않는다.)
+SEPARATE_SH = False
 
 try:
     from lpipsPyTorch.modules.lpips import LPIPS
@@ -35,6 +34,17 @@ except Exception:
     LPIPS_AVAILABLE = False
 
 _lpips_model = None
+
+# 저장소 버전에 따라 render()가 받는 인자가 다르므로, 지원하는 것만 넘긴다.
+_RENDER_PARAMS = set(inspect.signature(render).parameters)
+
+def _render_kwargs(train_test_exp, separate_sh):
+    kwargs = {}
+    if "use_trained_exp" in _RENDER_PARAMS:
+        kwargs["use_trained_exp"] = train_test_exp
+    if "separate_sh" in _RENDER_PARAMS:
+        kwargs["separate_sh"] = separate_sh
+    return kwargs
 
 def _get_lpips_model():
     """LPIPS(VGG) 모델을 한 번만 만들어 재사용한다 (metrics.py와 동일한 net_type='vgg')."""
@@ -62,10 +72,10 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     psnrs, ssims, lpipss = [], [], []
 
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
-        rendering = render(view, gaussians, pipeline, background, use_trained_exp=train_test_exp, separate_sh=separate_sh)["render"]
+        rendering = render(view, gaussians, pipeline, background, **_render_kwargs(train_test_exp, separate_sh))["render"]
         gt = view.original_image[0:3, :, :]
 
-        if args.train_test_exp:
+        if train_test_exp:
             rendering = rendering[..., rendering.shape[-1] // 2:]
             gt = gt[..., gt.shape[-1] // 2:]
 
@@ -99,13 +109,15 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
         scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)
 
         bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
+        # 구버전 3DGS 기반 저장소에는 train_test_exp 옵션이 없다.
+        train_test_exp = getattr(dataset, "train_test_exp", False)
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
         if not skip_train:
-             render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, dataset.train_test_exp, separate_sh, skip_lpips)
+             render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, train_test_exp, separate_sh, skip_lpips)
 
         if not skip_test:
-             render_set(dataset.model_path, "test", scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background, dataset.train_test_exp, separate_sh, skip_lpips)
+             render_set(dataset.model_path, "test", scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background, train_test_exp, separate_sh, skip_lpips)
 
 if __name__ == "__main__":
     # Set up command line argument parser
@@ -123,4 +135,4 @@ if __name__ == "__main__":
     # Initialize system state (RNG)
     safe_state(args.quiet)
 
-    render_sets(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test, SPARSE_ADAM_AVAILABLE, args.skip_lpips)
+    render_sets(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test, SEPARATE_SH, args.skip_lpips)
