@@ -23,7 +23,7 @@ from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
 import torch.nn.functional as F
-
+from screen_split import screen_major_axis_split
 try:
     from diff_gaussian_rasterization import SparseGaussianAdam
 except:
@@ -598,45 +598,32 @@ class GaussianModel:
         viewspace_point_tensor,
         max_grad,
         extent,
+        viewpoint_camera,
+        shrink=0.5,
     ):
-        """
-        optimizer.step() 이후에 호출한다 (이번 렌더의 viewspace grad 사용).
- 
-        두 기준이 각각 허용하는 자식 수 중 작은 쪽으로 split:
-            |g_abs| / max_grad   :  4배 -> 2,  16배 -> 4,  64배 -> 8   (얼마나 찢고 싶은가)
-            |g_abs| / |g_pts|    :  2배 -> 2,   4배 -> 4,   8배 -> 8   (얼마나 찢어도 되는가)
-            N = min(위 둘),  둘 중 하나라도 2 미만이면 split 안 함
-            예) max_grad 70배(8 원함) & g_pts 대비 5배(4까지 허용) -> 4개
-        (+ 크기 조건: max scale > percent_dense * extent)
- 
-        자식 생성: 기존 3DGS split
-            위치  = 부모 분포 N(mu, Sigma)에서 N개 샘플
-            scale = 부모 scale / (1.6 * N / 2)
-            rotation / 색 / opacity / flag 는 부모 상속, 부모는 제거.
-        반환: split된 부모 개수
-        """
+
         point_count = self._xyz.shape[0]
         if point_count == 0:
             return 0
- 
+
         abs_grad = viewspace_abs_tensor.grad
         pt_grad = viewspace_point_tensor.grad
         if abs_grad is None or pt_grad is None:
             return 0
- 
+
         grad_norm = torch.nan_to_num(torch.norm(abs_grad[:, :2], dim=-1), nan=0.0, posinf=0.0, neginf=0.0)
         real_grad_norm = torch.nan_to_num(torch.norm(pt_grad[:, :2], dim=-1), nan=0.0, posinf=0.0, neginf=0.0)
- 
+
         # 기준별 "2의 몇 제곱 개까지" (k=1,2,3 -> 2,4,8개)
         r_max = grad_norm / max_grad                                            # max_grad 대비 배율
         r_pts = grad_norm / real_grad_norm.clamp_min(1e-12)                     # |g_pts| 대비 배율
         k_max = torch.floor(torch.log2(r_max.clamp_min(1e-12)) / 10 + 1)        # 1~1023배->1, 1024배 이상->2
         k_all = torch.where(r_pts >= 10, k_max, torch.zeros_like(k_max))        # |g_pts| 대비 10배 이상일 때만 split
- 
+
         selected_pts_mask = (
             (k_all >= 1)
-            &(r_pts>=1)
-            & (self._explore_split_count < self.max_explore_split) 
+            & (r_pts >= 1)
+            & (self._explore_split_count < self.max_explore_split)
             & (self.get_scaling.max(dim=1).values > self.percent_dense * extent)
         )
         sel_idx = selected_pts_mask.nonzero(as_tuple=True)[0]
@@ -646,45 +633,46 @@ class GaussianModel:
  
         device = self._xyz.device
         dtype = self._xyz.dtype
- 
-        # ---- 부모별 자식 수 (2, 4, 8)
-        n_child = torch.pow(2, k_all[sel_idx].long())                           # (M,)
- 
-        # ---- 자식별 부모 인덱스 (부모마다 n_child개씩 연속)
-        parent_all = sel_idx.repeat_interleave(n_child)                         # (C,)
-        n_per_child = n_child.repeat_interleave(n_child).to(dtype)              # (C,) 각 자식의 N
+
+        # ---- 투영 장축 split (부모별 k단계: 2, 4, 8개)
+        # 매 단계에서 "아직 쪼갤 횟수가 남은" 가우시안만 현재 카메라에 다시 투영해
+        # 그 장축 방향으로 둘로 나눈다. 루프는 최대 k_max번(단계 수)만 돈다.
+        cur_xyz = self._xyz[sel_idx]
+        cur_scale = self.get_scaling[sel_idx]                                   # activated
+        cur_rot = self._rotation[sel_idx]
+        cur_parent = sel_idx                                                    # 각 조각의 원래 부모 인덱스
+        cur_left = k_all[sel_idx].long()                                        # 남은 split 횟수
+
+        new_xyz, new_scale, new_rotation, parent_local = screen_major_axis_split(
+            self._xyz[sel_idx], self.get_scaling[sel_idx], self._rotation[sel_idx],
+            viewpoint_camera, k=k_all[sel_idx].long(),
+        )
+        parent_all = sel_idx[parent_local]                                      # (C,) 자식별 부모 인덱스
         num_children = int(parent_all.numel())
- 
-        # ---- 3DGS split
-        stds = self.get_scaling[parent_all]                                     # (C,3)
-        samples = torch.normal(mean=torch.zeros_like(stds), std=stds)
-        rots = build_rotation(self._rotation[parent_all])                       # (C,3,3)
-        new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self._xyz[parent_all]
-        new_scale = stds / (1.6 * n_per_child / 2.0)[:, None]
- 
+
         # densification_postfix가 통계를 전역 0으로 "새로 할당"하므로 참조만 잡아둔다.
         old_gradient_accum = self.xyz_gradient_accum
         old_denom = self.denom
         old_max_radii2D = self.max_radii2D
         self.tmp_radii = torch.zeros(point_count, dtype=dtype, device=device)
- 
+
         self.densification_postfix(
             new_xyz,
             self._features_dc[parent_all],
             self._features_rest[parent_all],
             self._opacity[parent_all],
             self.scaling_inverse_activation(new_scale),
-            self._rotation[parent_all],
+            new_rotation,
             torch.zeros(num_children, dtype=dtype, device=device),
             self._gaussian_scene_num[parent_all],
             self._explore_split_count[parent_all] + 1,
         )
- 
+
         # 기존 통계 복원 + 자식은 부모 통계 상속
         self.xyz_gradient_accum = torch.cat((old_gradient_accum, old_gradient_accum[parent_all]), dim=0)
         self.denom = torch.cat((old_denom, old_denom[parent_all]), dim=0)
         self.max_radii2D = torch.cat((old_max_radii2D, old_max_radii2D[parent_all]), dim=0)
- 
+
         # 부모 제거
         prune_filter = torch.cat((
             selected_pts_mask,
@@ -692,7 +680,7 @@ class GaussianModel:
         ))
         self.prune_points(prune_filter)
         self.tmp_radii = None
- 
+
         self.last_split_children = num_children
         return split_count
 

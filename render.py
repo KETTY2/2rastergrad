@@ -94,7 +94,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         print(f"[{name}] 카메라가 없어 metric을 계산하지 않았습니다.")
         return
 
-    n = len(psnrs)
+    n = len(psnrs) 
     print(f"\n[{name} | iter {iteration} | {n} views]")
     print("  SSIM : {:>12.7f}".format(sum(ssims) / n))
     print("  PSNR : {:>12.7f}".format(sum(psnrs) / n))

@@ -228,16 +228,17 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             # Exploration: optimizer.step() 이후, 서로 독립적으로 실행
             # viewspace grad는 이번 렌더 시점의 Gaussian 순서 기준이므로,
             # 이번 iteration에 densify가 돌았으면(개수/순서 변경) 건너뛴다.
-            if iteration <= opt.densify_until_iter and iteration > 10000 and not densified:
+            if iteration < opt.densify_until_iter and iteration > 10000 and not densified:
 
                 # random split: 이번 렌더의 viewspace grad 사용
-                if is_fifth_cycle == 0:
-                    gaussians.random_split_explore(
-                        split_pkg["viewspace_abs"],
-                        split_pkg["viewspace_points"],
-                        max_grad=opt.densify_grad_threshold,
-                        extent=scene.cameras_extent,
-                    )
+                #if is_fifth_cycle == 0:
+                gaussians.random_split_explore(
+                    split_pkg["viewspace_abs"],
+                    split_pkg["viewspace_points"],
+                    max_grad=opt.densify_grad_threshold,
+                    extent=scene.cameras_extent,
+                    viewpoint_cam,        
+                )
             # ExploreGS random seed: viewspace grad를 쓰지 않으므로 random split 이후에 실행
             # (ExploreGS _check: densify_from_iter < iteration < until, iteration % interval == 0)
             if (SEED_EXPLORE_ENABLED
@@ -316,7 +317,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                     psnr_test += psnr(image, gt_image).mean().double()
                 psnr_test /= len(config['cameras'])
                 l1_test /= len(config['cameras'])          
-                print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
+                print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test)) 
                 if tb_writer:
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_test, iteration)
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_test, iteration)
