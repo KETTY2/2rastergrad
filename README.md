@@ -1,7 +1,7 @@
 ## Environment Setup
 
 ```bash
-git submodule update --init --recursive  #for simple-knn
+
 
 # Create and activate environment
 conda create -n H python=3.12
