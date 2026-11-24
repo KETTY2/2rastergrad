@@ -1,13 +1,11 @@
 ## Environment Setup
 
 ```bash
-git clone --depth 1 [https://github.com/Chengbo-Wang/Exploration-for-GS.git](https://github.com/Chengbo-Wang/Exploration-for-GS.git)
-cd Exploration-for-GS
-git submodule update --init --recursive
+git submodule update --init --recursive  #for simple-knn
 
 # Create and activate environment
-conda create -n Explore4GS python=3.12
-conda activate Explore4GS
+conda create -n H python=3.12
+conda activate H
 
 # Install PyTorch (with CUDA support, choose version for your CUDA)
 # See: [https://pytorch.org/get-started/previous-versions/](https://pytorch.org/get-started/previous-versions/)
@@ -20,3 +18,5 @@ pip install plyfile tqdm opencv-python joblib
 pip install submodules/diff-gaussian-rasterization --no-build-isolation
 pip install submodules/simple-knn --no-build-isolation
 pip install submodules/fused-ssim --no-build-isolation
+# single scene
+python train.py -s <dataset>/scene --eval
