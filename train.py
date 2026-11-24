@@ -231,14 +231,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if iteration < opt.densify_until_iter and iteration > 10000 and not densified:
 
                 # random split: 이번 렌더의 viewspace grad 사용
-                #if is_fifth_cycle == 0:
-                gaussians.random_split_explore(
-                    split_pkg["viewspace_abs"],
-                    split_pkg["viewspace_points"],
-                    max_grad=opt.densify_grad_threshold,
-                    extent=scene.cameras_extent,
-                    viewpoint_cam,        
-                )
+                if is_fifth_cycle == 0:
+                    gaussians.random_split_explore(
+                        split_pkg["viewspace_abs"],
+                        split_pkg["viewspace_points"],
+                        max_grad=opt.densify_grad_threshold,
+                        extent=scene.cameras_extent,
+                        viewpoint_cam,        
+                    )
             # ExploreGS random seed: viewspace grad를 쓰지 않으므로 random split 이후에 실행
             # (ExploreGS _check: densify_from_iter < iteration < until, iteration % interval == 0)
             if (SEED_EXPLORE_ENABLED
